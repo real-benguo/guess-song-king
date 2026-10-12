@@ -33,7 +33,17 @@
     rank: $('rank'), rankLabel: $('rank-label'), finalScore: $('final-score'),
     statRight: $('stat-right'), statTotal: $('stat-total'), statAcc: $('stat-acc'),
     modal: $('modal'), modalTitle: $('modal-title'), modalBody: $('modal-body'),
-    modalActions: $('modal-actions'), modalClose: $('modal-close')
+    modalActions: $('modal-actions'), modalClose: $('modal-close'),
+    // 多人
+    btnMulti: $('btn-multi'),
+    lobbyName: $('lobby-name'), joinCode: $('join-code'),
+    btnCreate: $('btn-create'), btnJoin: $('btn-join'),
+    lobbyHint: $('lobby-hint'), btnLobbyBack: $('btn-lobby-back'),
+    roomCode: $('room-code'), btnRoomLeave: $('btn-room-leave'),
+    playerList: $('player-list'), playerCount: $('player-count'),
+    roomSettings: $('room-settings'), hostTag: $('host-tag'),
+    btnRoomStart: $('btn-room-start'), roomHint: $('room-hint'),
+    liveRank: $('live-rank'), board: $('board')
   };
 
   var audio = new Audio();
@@ -198,17 +208,16 @@
     var q = state.current;
     state.answered++;
 
+    var gain = 0;
     if (isRight) {
-      var gain = scoreFor(state.usedSec);
-      if (fill) gain *= 2;
+      gain = scoreFor(state.usedSec);
+      if (fill && !isMulti) gain *= 2;
       state.score += gain;
       state.right++;
       sfxRight();
       popScore('+' + fmt(gain));
       el.playerTip.textContent = '✅ 答对！+' + fmt(gain) + ' 分';
       markDot(true);
-      updateHud();
-      nextTimer = setTimeout(nextQuestion, 620);   // 直接进入下一题
     } else {
       sfxWrong();
       el.playerTip.textContent = isTimeout
@@ -216,9 +225,17 @@
         : ('❌ 答错了 · 正确答案：' + q.correct.a + '《' + q.correct.t + '》');
       revealAnswer(userText);
       markDot(false);
-      updateHud();
-      nextTimer = setTimeout(nextQuestion, 3000);  // 3 秒后下一题
     }
+    updateHud();
+
+    if (isMulti && mState) {
+      // 多人：分数交上去，题目节奏由房主控制
+      mState.answered++;
+      RoomAPI.submit(room.code, { score: gain, right: isRight ? 1 : 0 }, function () {});
+      if (isHost()) scheduleHostAdvance();
+      return;
+    }
+    nextTimer = setTimeout(nextQuestion, isRight ? 620 : 3000);
   }
 
   function revealAnswer(userText) {
@@ -476,12 +493,21 @@
     el.statRight.textContent = state.right;
     el.statTotal.textContent = state.answered;
     el.statAcc.textContent = acc + '%';
+    el.board.hidden = true;
     show('s-over');
     if (ratio >= 0.7 && state.answered >= 5) confetti();
   }
 
   /* ---------------- 开始 ---------------- */
   function startGame() {
+    // 单机模式：清掉多人状态
+    isMulti = false;
+    stopRoomPoll();
+    room = null; mState = null;
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    el.liveRank.hidden = true;
+    el.board.hidden = true;
+
     var p = shuffle(gamePool());
     // 歌名去重
     var seen = {}, uniq = [];
@@ -539,6 +565,283 @@
     });
   }
 
+  /* ================= 多人对战 ================= */
+  var room = null, roomPoll = null, isMulti = false, mState = null, hostAdvTimer = null;
+  var NAME_KEY = 'gs_myname';
+
+  function saveName(n) { try { localStorage.setItem(NAME_KEY, n); } catch (e) {} }
+  function loadName() { try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; } }
+  function isHost() { return !!(room && room.hostId === RoomAPI.myId()); }
+  function isActive(id) { var n = $(id); return !!(n && n.classList.contains('is-active')); }
+  function findSong(key) {
+    for (var i = 0; i < DB.length; i++) if ((DB[i].a + '|' + DB[i].t) === key) return DB[i];
+    return null;
+  }
+  function poolForPlay(p) {
+    var all = DB.slice();
+    if (p === 'lyric') all = all.filter(function (s) { return s.ly && s.ly.length > 40; });
+    return all;
+  }
+  function uniqByTitle(pool) {
+    var seen = {}, out = [];
+    pool.forEach(function (x) { if (!seen[x.t]) { seen[x.t] = 1; out.push(x); } });
+    return out;
+  }
+
+  function goLobby() {
+    show('s-lobby');
+    if (el.lobbyName) el.lobbyName.value = loadName();
+    if (el.lobbyHint) {
+      el.lobbyHint.textContent = RoomAPI.backend === 'mqtt'
+        ? '房间码发给朋友，他们在自己手机上输码就能进来。'
+        : '⚠️ 当前是本机测试模式：只能在同一浏览器开多个标签试玩。';
+    }
+  }
+
+  function enterRoom(r) {
+    room = r; isMulti = true;
+    show('s-room');
+    renderRoom();
+    startRoomPoll();
+  }
+  function startRoomPoll() { stopRoomPoll(); roomPoll = setInterval(pollRoom, 1000); }
+  function stopRoomPoll() { if (roomPoll) { clearInterval(roomPoll); roomPoll = null; } }
+
+  function pollRoom() {
+    if (!room) return;
+    if (RoomAPI.ping) RoomAPI.ping();      // 每秒一次，顺便当心跳
+    RoomAPI.get(room.code, function (err, r) {
+      if (err || !r) {
+        stopRoomPoll(); alert('房间已关闭'); room = null; isMulti = false; show('s-lobby'); return;
+      }
+      room = r;
+      if (room.status === 'playing' && !isActive('s-game')) {
+        try { startMultiGame(); } catch (e) { console.error('startMultiGame failed', e); }
+      }
+      if (room.status === 'over' && isActive('s-game')) endMultiGame();
+      if (isActive('s-room')) renderRoom();
+      if (isActive('s-game') && isMulti) {
+        updateLiveRank();
+        if (room.songId && (!mState || room.songId !== mState.songId)) showMultiQuestion(room.songId);
+      }
+    });
+  }
+
+  function renderRoom() {
+    if (!room) return;
+    var host = isHost();
+    el.roomCode.textContent = room.code;
+    el.playerCount.textContent = room.players.length + ' 人';
+    el.playerList.innerHTML = '';
+    room.players.forEach(function (p) {
+      var d = document.createElement('div');
+      d.className = 'player-item' + (p.id === RoomAPI.myId() ? ' is-me' : '');
+      var nm = document.createElement('span');
+      nm.className = 'p-name'; nm.textContent = p.name;
+      d.appendChild(nm);
+      if (p.id === room.hostId) {
+        var t = document.createElement('span');
+        t.className = 'p-tag'; t.textContent = '房主';
+        d.appendChild(t);
+      }
+      if (p.id === RoomAPI.myId()) {
+        var eb = document.createElement('button');
+        eb.className = 'p-edit'; eb.textContent = '✏️'; eb.title = '改名字';
+        eb.addEventListener('click', renameSelf);
+        d.appendChild(eb);
+      }
+      el.playerList.appendChild(d);
+    });
+    renderRoomSettings(host);
+    el.btnRoomStart.hidden = !host;
+    el.hostTag.textContent = host ? '你是房主，可以修改' : '只有房主能改';
+    el.roomHint.textContent = host ? '你是房主，设置好后点「开始游戏」' : '等房主开始…';
+  }
+
+  function renderRoomSettings(editable) {
+    var s = room.settings;
+    var defs = [
+      { k: 'mode', name: '玩法', opts: [['speed', '有限题·比速度'], ['timed', '限时·比总分']] },
+      { k: 'rounds', name: '题目数量', opts: [[5, '5 题'], [10, '10 题'], [15, '15 题'], [20, '20 题']], show: s.mode === 'speed' },
+      { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
+      { k: 'play', name: '题目类型', opts: [['intro', '前奏'], ['random', '随机'], ['lyric', '歌词']] }
+    ];
+    el.roomSettings.innerHTML = '';
+    defs.forEach(function (d) {
+      if (d.show === false) return;
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var nm = document.createElement('span');
+      nm.className = 'set-name'; nm.textContent = d.name;
+      row.appendChild(nm);
+      var seg = document.createElement('div');
+      seg.className = 'seg';
+      d.opts.forEach(function (o) {
+        var b = document.createElement('button');
+        b.textContent = o[1];
+        if (String(s[d.k]) === String(o[0])) b.className = 'on';
+        b.disabled = !editable;
+        b.addEventListener('click', function () {
+          var patch = {}; patch[d.k] = o[0];
+          RoomAPI.updateSettings(room.code, patch, function (err, r) {
+            if (err) { alert(err); return; }
+            room = r; renderRoom();
+          });
+        });
+        seg.appendChild(b);
+      });
+      row.appendChild(seg);
+      el.roomSettings.appendChild(row);
+    });
+  }
+
+  function renameSelf() {
+    openModal('改名字',
+      '<input type="text" id="rename-input" class="text-input" maxlength="8" placeholder="新名字（最多 8 个字）" />',
+      [
+        { label: '取消', cls: 'btn-ghost', fn: closeModal },
+        {
+          label: '确定', cls: 'btn-primary', fn: function () {
+            var inp = document.getElementById('rename-input');
+            var v = (inp && inp.value || '').trim().slice(0, 8);
+            if (!v) return;
+            RoomAPI.rename(room.code, v, function (err, r) {
+              if (err) { alert(err); return; }
+              room = r; saveName(v); closeModal(); renderRoom();
+            });
+          }
+        }
+      ]);
+  }
+
+  /* ---- 多人游戏 ---- */
+  function startMultiGame() {
+    var s = room.settings;
+    play = s.play;   // 多人时题目类型跟随房间设置，而不是首页的选择
+    var pool = uniqByTitle(shuffle(poolForPlay(s.play)));
+    if (pool.length < 4) { alert('这个玩法的题库不够'); return; }
+
+    mState = { songId: null, pool: pool, cursor: 0, answered: 0, over: false };
+    state = {
+      allPool: pool, queue: [], used: {}, answered: 0, score: 0, right: 0,
+      usedSec: 0, tStart: 0, current: null, over: false
+    };
+    el.hudScore.textContent = '0';
+    el.hudRight.textContent = '0';
+    el.dots.innerHTML = '';
+    el.dots.hidden = true;
+    el.liveRank.hidden = false;
+    el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' +
+      (s.mode === 'speed' ? (s.rounds + ' 题') : (s.minutes + ' 分钟'));
+    show('s-game');
+    if (isHost()) hostPushNext();
+    updateLiveRank();
+  }
+
+  function hostPushNext() {
+    if (!isHost() || !mState || mState.over) return;
+    var s = room.settings;
+    if (s.mode === 'speed' && mState.cursor >= s.rounds) return RoomAPI.finish(room.code, function () {});
+    if (s.mode === 'timed' && room.endsAt && Date.now() > room.endsAt) return RoomAPI.finish(room.code, function () {});
+    if (mState.cursor >= mState.pool.length) return RoomAPI.finish(room.code, function () {});
+    var song = mState.pool[mState.cursor++];
+    RoomAPI.setSong(room.code, song.a + '|' + song.t, function () {});
+  }
+
+  /* 房主：等所有人答完（最多 9 秒）再推下一题 */
+  function scheduleHostAdvance() {
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    var t0 = Date.now();
+    var tick = function () {
+      if (!isHost() || !mState || mState.over || !isActive('s-game')) return;
+      var idx = mState.cursor - 1;
+      var allDone = room.players.every(function (p) { return p.answered > idx; });
+      if (allDone || Date.now() - t0 > 9000) { hostPushNext(); return; }
+      hostAdvTimer = setTimeout(tick, 500);
+    };
+    hostAdvTimer = setTimeout(tick, 900);
+  }
+
+  function showMultiQuestion(key) {
+    var song = findSong(key);
+    if (!song || !mState) return;
+    mState.songId = key;
+    var q = makeQuestion(song);
+    if (!q) { if (isHost()) hostPushNext(); return; }
+    state.current = q;
+    renderQuestion();
+  }
+
+  function updateLiveRank() {
+    if (!room || !el.liveRank) return;
+    var list = room.players.slice().sort(function (a, b) { return b.score - a.score; });
+    el.liveRank.innerHTML = '';
+    list.forEach(function (p) {
+      var d = document.createElement('div');
+      d.className = 'lr-item' + (p.id === RoomAPI.myId() ? ' is-me' : '');
+      var n = document.createElement('span'); n.className = 'lr-n'; n.textContent = p.name;
+      var s = document.createElement('span'); s.className = 'lr-s'; s.textContent = fmt(p.score);
+      d.appendChild(n); d.appendChild(s);
+      el.liveRank.appendChild(d);
+    });
+  }
+
+  function endMultiGame() {
+    if (!state || state.over) return;
+    state.over = true;
+    stopTimer(); stopAudio();
+    if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    isMulti = false;
+    showBoard();
+  }
+
+  function showBoard() {
+    var list = room.players.slice().sort(function (a, b) { return b.score - a.score; });
+    var mvp = list[0], meP = null;
+    list.forEach(function (p) { if (p.id === RoomAPI.myId()) meP = p; });
+
+    el.rank.textContent = '🏁';
+    el.rankLabel.textContent = '本局结束';
+    el.finalScore.textContent = fmt(meP ? meP.score : 0);
+    el.statRight.textContent = meP ? meP.right : 0;
+    el.statTotal.textContent = meP ? meP.answered : 0;
+    el.statAcc.textContent = (meP && meP.answered) ? Math.round(meP.right / meP.answered * 100) + '%' : '0%';
+
+    el.board.hidden = false;
+    el.board.innerHTML = '';
+    if (mvp) {
+      var b = document.createElement('div');
+      b.className = 'mvp-banner';
+      b.innerHTML = '<div class="mvp-t">👑 MVP</div><div class="mvp-n"></div>';
+      b.querySelector('.mvp-n').textContent = mvp.name;
+      el.board.appendChild(b);
+    }
+    list.forEach(function (p, i) {
+      var row = document.createElement('div');
+      row.className = 'board-row' + (i === 0 ? ' is-mvp' : '') + (p.id === RoomAPI.myId() ? ' is-me' : '');
+      row.innerHTML = '<div class="b-rank"></div><div style="flex:1;min-width:0"><div class="b-name"></div><div class="b-sub"></div></div><div class="b-score"></div>';
+      row.querySelector('.b-rank').textContent = i === 0 ? '👑' : String(i + 1);
+      row.querySelector('.b-name').textContent = p.name;
+      row.querySelector('.b-sub').textContent = '答对 ' + p.right + ' / ' + p.answered + ' 题';
+      row.querySelector('.b-score').textContent = fmt(p.score);
+      el.board.appendChild(row);
+    });
+
+    show('s-over');
+    if (mvp && mvp.id === RoomAPI.myId()) confetti();
+  }
+
+  function leaveRoom() {
+    if (room) RoomAPI.leave(room.code, function () {});
+    stopRoomPoll();
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    room = null; isMulti = false; mState = null;
+    el.liveRank.hidden = true;
+    el.board.hidden = true;
+    show('s-start');
+  }
+
   /* ---------------- 事件 ---------------- */
   el.poolTiles.forEach(function (t) {
     t.addEventListener('click', function () {
@@ -573,6 +876,51 @@
   el.btnScores.addEventListener('click', showScores);
   el.modalClose.addEventListener('click', closeModal);
   el.modal.addEventListener('click', function (e) { if (e.target === el.modal) closeModal(); });
+
+  /* ---- 多人事件 ---- */
+  el.btnMulti.addEventListener('click', goLobby);
+  el.btnLobbyBack.addEventListener('click', function () { show('s-start'); });
+  el.joinCode.addEventListener('input', function () {
+    this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  });
+
+  el.btnCreate.addEventListener('click', function () {
+    var name = (el.lobbyName.value || '').trim().slice(0, 8);
+    if (!name) { el.lobbyHint.textContent = '先给自己起个名字'; return; }
+    saveName(name);
+    el.lobbyHint.textContent = '正在创建房间…';
+    RoomAPI.create(name, function (err, r) {
+      if (err) { el.lobbyHint.textContent = err; return; }
+      el.lobbyHint.textContent = '';
+      enterRoom(r);
+    });
+  });
+
+  el.btnJoin.addEventListener('click', function () {
+    var name = (el.lobbyName.value || '').trim().slice(0, 8);
+    var code = (el.joinCode.value || '').trim().toUpperCase();
+    if (!name) { el.lobbyHint.textContent = '先给自己起个名字'; return; }
+    if (code.length !== 6) { el.lobbyHint.textContent = '房间码是 6 位'; return; }
+    saveName(name);
+    el.lobbyHint.textContent = '正在加入…';
+    RoomAPI.join(code, name, function (err, r) {
+      if (err) { el.lobbyHint.textContent = err; return; }
+      el.lobbyHint.textContent = '';
+      enterRoom(r);
+    });
+  });
+
+  el.btnRoomStart.addEventListener('click', function () {
+    if (!isHost()) return;
+    RoomAPI.start(room.code, function (err) { if (err) alert(err); });
+  });
+
+  el.btnRoomLeave.addEventListener('click', function () {
+    openModal('离开房间？', '<p class="empty-tip">离开后要重新输入房间码才能回来。</p>', [
+      { label: '再玩会儿', cls: 'btn-ghost', fn: closeModal },
+      { label: '离开', cls: 'btn-primary', fn: function () { closeModal(); leaveRoom(); } }
+    ]);
+  });
 
   el.btnQuit.addEventListener('click', function () {
     if (!state || state.over) { show('s-start'); return; }

@@ -54,6 +54,7 @@
     </div>
 
     <button class="btn btn-primary" id="btn-start">开始游戏</button>
+    <button class="btn btn-multi" id="btn-multi">🎮 多人对战</button>
 
     <div class="foot-links">
       <button id="btn-rules">📖 规则说明</button>
@@ -73,6 +74,8 @@
       <div class="hud-item"><span class="hud-k">得分</span><span class="hud-v" id="hud-score">0</span></div>
       <div class="hud-item"><span class="hud-k">答对</span><span class="hud-v" id="hud-right">0</span></div>
     </header>
+
+    <div class="live-rank" id="live-rank" hidden></div>
 
     <div class="player">
       <button class="disc" id="disc" aria-label="播放片段">
@@ -116,8 +119,55 @@
       <div class="stat"><b id="stat-acc">0%</b><span>正确率</span></div>
     </div>
 
+    <div class="board" id="board" hidden></div>
+
     <button class="btn btn-primary" id="btn-again">再来一局</button>
     <button class="btn btn-ghost" id="btn-home">回主界面</button>
+  </section>
+
+  <!-- ============ 多人 · 大厅 ============ -->
+  <section class="screen" id="s-lobby">
+    <h2 class="page-title">🎮 多人对战</h2>
+    <p class="page-sub">和朋友同一首歌、同时抢答</p>
+
+    <div class="group">
+      <div class="group-label">你的名字</div>
+      <input type="text" id="lobby-name" class="text-input" placeholder="起个名字（最多 8 个字）" maxlength="8" autocomplete="off" />
+    </div>
+
+    <button class="btn btn-primary" id="btn-create">创建房间</button>
+
+    <div class="or-line"><span>或者加入朋友的房间</span></div>
+
+    <div class="join-row">
+      <input type="text" id="join-code" class="text-input code-input" placeholder="6 位房间码" maxlength="6"
+             autocomplete="off" autocapitalize="characters" spellcheck="false" />
+      <button class="btn btn-primary btn-sm" id="btn-join">加入</button>
+    </div>
+
+    <p class="hint" id="lobby-hint"></p>
+    <button class="btn btn-ghost" id="btn-lobby-back">返回主界面</button>
+  </section>
+
+  <!-- ============ 多人 · 房间 ============ -->
+  <section class="screen" id="s-room">
+    <div class="game-top">
+      <div class="badge">房间码 <b class="code-hl" id="room-code">------</b></div>
+      <button class="btn-quit" id="btn-room-leave">离开</button>
+    </div>
+
+    <div class="room-block">
+      <div class="room-label">参与者 <span id="player-count">1 人</span></div>
+      <div class="player-list" id="player-list"></div>
+    </div>
+
+    <div class="room-block">
+      <div class="room-label">房间设置 <span id="host-tag">只有房主能改</span></div>
+      <div class="settings" id="room-settings"></div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-room-start">开始游戏</button>
+    <p class="hint" id="room-hint">等待房主开始…</p>
   </section>
 
 </main>
@@ -133,7 +183,9 @@
   </div>
 </div>
 
+<script src="vendor/mqtt.min.js"></script>
 <script src="data/songs.js"></script>
+<script src="room-api.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
