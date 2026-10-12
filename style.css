@@ -54,6 +54,7 @@ body{
 .group-label{font-size:12.5px; color:var(--muted); letter-spacing:2px; margin:0 0 8px 4px;}
 
 .tiles{display:grid; grid-template-columns:repeat(3,1fr); gap:9px;}
+#play-tiles{grid-template-columns:repeat(2,1fr);}
 .tile{
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
   padding:14px 6px; border-radius:16px; cursor:pointer; font-family:inherit;
@@ -444,3 +445,44 @@ body{
 }
 .mvp-banner .mvp-t{font-size:12.5px;color:var(--gold);letter-spacing:2px;}
 .mvp-banner .mvp-n{font-size:22px;font-weight:900;margin-top:4px;}
+
+/* ---------- 出题 / 答题 / 账号 ---------- */
+.btn-quiz{
+  color:#fff;margin-top:10px;
+  background:linear-gradient(100deg,#22c55e,#22d3ee);
+  box-shadow:0 12px 32px -12px rgba(34,197,94,.85);
+}
+.seg-lg{display:flex;gap:6px;width:100%;margin-bottom:14px;}
+.seg-lg button{flex:1;padding:11px 8px;font-size:14.5px;border-radius:12px;}
+.pane{width:100%;}
+.song-picker{max-height:200px;overflow-y:auto;margin-top:9px;display:flex;flex-direction:column;gap:6px;}
+.song-item{
+  display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:12px;cursor:pointer;
+  background:var(--card);border:1px solid var(--line);font-family:inherit;color:var(--txt);
+  text-align:left;width:100%;transition:.16s;
+}
+.song-item:active{transform:scale(.985);}
+.song-item .si-t{flex:1;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.song-item .si-a{font-size:11.5px;color:var(--muted);flex:0 0 auto;}
+.song-item .si-add{color:var(--p2);font-weight:800;flex:0 0 auto;}
+.picked{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
+.picked-item{
+  display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:99px;font-size:12.5px;
+  background:rgba(124,92,255,.16);border:1px solid rgba(124,92,255,.35);
+}
+.picked-item button{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px;}
+.code-box{
+  width:100%;padding:16px;border-radius:16px;margin:14px 0;text-align:center;
+  background:linear-gradient(100deg,rgba(34,211,238,.14),rgba(124,92,255,.12));
+  border:1px solid rgba(34,211,238,.4);
+}
+.code-box-t{font-size:12px;color:var(--muted);letter-spacing:2px;}
+.code-box-v{font-size:30px;font-weight:900;letter-spacing:5px;color:var(--p2);margin:6px 0;}
+.results{display:flex;flex-direction:column;gap:7px;}
+.result-row{
+  display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:13px;
+  background:var(--card);border:1px solid var(--line);
+}
+.result-row .rr-n{flex:1;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.result-row .rr-s{font-size:11.5px;color:var(--muted);}
+.result-row .rr-v{font-size:17px;font-weight:800;color:var(--p2);font-variant-numeric:tabular-nums;}

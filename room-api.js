@@ -15,7 +15,7 @@ window.RoomAPI = (function () {
   var MAX_PLAYERS = 8;
   var STALE_MS = 25000;      // 超过这么久没心跳的玩家，房主会踢掉
 
-  var DEFAULT_SETTINGS = { rounds: 10, play: 'intro', mode: 'speed', minutes: 3 };
+  var DEFAULT_SETTINGS = { rounds: 10, play: 'sound', mode: 'speed', minutes: 3 };
 
   var client = null;
   var myRoom = null;

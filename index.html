@@ -33,9 +33,8 @@
     <div class="group">
       <div class="group-label">选玩法</div>
       <div class="tiles" id="play-tiles">
-        <button class="tile is-active" data-play="intro"><span class="tile-main">前奏</span><span class="tile-sub">听开头</span></button>
-        <button class="tile" data-play="random"><span class="tile-main">随机</span><span class="tile-sub">听片段</span></button>
-        <button class="tile" data-play="lyric"><span class="tile-main">歌词</span><span class="tile-sub">看词猜</span></button>
+        <button class="tile is-active" data-play="sound"><span class="tile-main">听声猜歌</span><span class="tile-sub">听片段猜</span></button>
+        <button class="tile" data-play="lyric"><span class="tile-main">看词猜歌</span><span class="tile-sub">看歌词猜</span></button>
       </div>
     </div>
 
@@ -55,10 +54,12 @@
 
     <button class="btn btn-primary" id="btn-start">开始游戏</button>
     <button class="btn btn-multi" id="btn-multi">🎮 多人对战</button>
+    <button class="btn btn-quiz" id="btn-quiz">✍️ 出题 / 答题</button>
 
     <div class="foot-links">
-      <button id="btn-rules">📖 规则说明</button>
-      <button id="btn-scores">🏆 今日分数</button>
+      <button id="btn-rules">📖 规则</button>
+      <button id="btn-scores">🏆 分数</button>
+      <button id="btn-account">👤 账号</button>
     </div>
   </section>
 
@@ -170,6 +171,86 @@
     <p class="hint" id="room-hint">等待房主开始…</p>
   </section>
 
+  <!-- ============ 账号 ============ -->
+  <section class="screen" id="s-login">
+    <h2 class="page-title">👤 账号</h2>
+    <p class="page-sub">登录后才能出题、看答题结果</p>
+
+    <div class="group">
+      <div class="group-label">用户名</div>
+      <input type="text" id="acc-name" class="text-input" placeholder="用户名（最多 12 个字）" maxlength="12" autocomplete="off" />
+    </div>
+    <div class="group">
+      <div class="group-label">密码</div>
+      <input type="password" id="acc-pwd" class="text-input" placeholder="密码（最多 32 位）" maxlength="32" autocomplete="off" />
+    </div>
+
+    <button class="btn btn-primary" id="btn-login">登录</button>
+    <button class="btn btn-multi" id="btn-register">注册新账号</button>
+    <p class="hint" id="acc-hint">轻量账号：密码只做简单哈希后存在公开频道上，<b>别用重要密码</b>。</p>
+    <button class="btn btn-ghost" id="btn-login-back">返回主界面</button>
+  </section>
+
+  <!-- ============ 出题 / 答题 ============ -->
+  <section class="screen" id="s-quiz">
+    <div class="game-top">
+      <div class="badge" id="quiz-user">未登录</div>
+      <button class="btn-quit" id="btn-quiz-back">返回</button>
+    </div>
+
+    <div class="seg seg-lg" id="quiz-tabs">
+      <button class="on" data-tab="make">我来出题</button>
+      <button data-tab="take">我来答题</button>
+    </div>
+
+    <!-- 出题 -->
+    <div class="pane" id="pane-make">
+      <div class="group">
+        <div class="group-label">题目类型</div>
+        <div class="seg" id="mk-play">
+          <button class="on" data-v="sound">听声猜歌</button>
+          <button data-v="lyric">看词猜歌</button>
+        </div>
+      </div>
+      <div class="group">
+        <div class="group-label">作答方式</div>
+        <div class="seg" id="mk-fill">
+          <button class="on" data-v="0">给选项</button>
+          <button data-v="1">填空</button>
+        </div>
+      </div>
+      <div class="group">
+        <div class="group-label">挑歌 <span id="mk-count">已选 0 首</span></div>
+        <input type="text" id="mk-search" class="text-input" placeholder="输入歌名或歌手，如「晴天」" autocomplete="off" />
+        <div class="song-picker" id="mk-results"></div>
+        <div class="picked" id="mk-picked"></div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-make">生成答题码</button>
+
+      <div class="code-box" id="mk-code-box" hidden>
+        <div class="code-box-t">答题码</div>
+        <div class="code-box-v" id="mk-code">------</div>
+        <p class="hint">把这个码发给朋友：他们打开同一个网址 → 出题/答题 → 我来答题 → 输码</p>
+      </div>
+
+      <div class="group" id="mk-result-block" hidden>
+        <div class="group-label">答题结果 <span id="mk-rcount">0 人</span></div>
+        <div class="results" id="mk-results-list"></div>
+      </div>
+    </div>
+
+    <!-- 答题 -->
+    <div class="pane" id="pane-take" hidden>
+      <div class="group">
+        <div class="group-label">答题码</div>
+        <input type="text" id="tk-code" class="text-input code-input" placeholder="6 位答题码" maxlength="6" autocomplete="off" />
+      </div>
+      <button class="btn btn-primary" id="btn-take">开始答题</button>
+      <p class="hint" id="tk-hint"></p>
+    </div>
+  </section>
+
 </main>
 
 <!-- ============ 弹窗 ============ -->
@@ -186,6 +267,7 @@
 <script src="vendor/mqtt.min.js"></script>
 <script src="data/songs.js"></script>
 <script src="room-api.js"></script>
+<script src="user-api.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

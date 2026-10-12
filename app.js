@@ -43,15 +43,29 @@
     playerList: $('player-list'), playerCount: $('player-count'),
     roomSettings: $('room-settings'), hostTag: $('host-tag'),
     btnRoomStart: $('btn-room-start'), roomHint: $('room-hint'),
-    liveRank: $('live-rank'), board: $('board')
+    liveRank: $('live-rank'), board: $('board'),
+    btnAccount: $('btn-account'),
+    accName: $('acc-name'), accPwd: $('acc-pwd'),
+    btnLogin: $('btn-login'), btnRegister: $('btn-register'),
+    accHint: $('acc-hint'), btnLoginBack: $('btn-login-back'),
+    btnQuiz: $('btn-quiz'), quizUser: $('quiz-user'), btnQuizBack: $('btn-quiz-back'),
+    quizTabs: $('quiz-tabs'),
+    paneMake: $('pane-make'), paneTake: $('pane-take'),
+    mkPlay: $('mk-play'), mkFill: $('mk-fill'),
+    mkSearch: $('mk-search'), mkResults: $('mk-results'),
+    mkPicked: $('mk-picked'), mkCount: $('mk-count'),
+    btnMake: $('btn-make'),
+    mkCodeBox: $('mk-code-box'), mkCode: $('mk-code'),
+    mkResultBlock: $('mk-result-block'), mkRcount: $('mk-rcount'), mkResultsList: $('mk-results-list'),
+    tkCode: $('tk-code'), btnTake: $('btn-take'), tkHint: $('tk-hint')
   };
 
   var audio = new Audio();
   audio.preload = 'auto';
 
-  var pool = 'zh', play = 'intro', fill = false, endless = false;
+  var pool = 'zh', play = 'sound', fill = false, endless = false;
   var POOL_NAME = { jay: '周杰伦专项', zh: '国语专项', yue: '粤语专项' };
-  var PLAY_NAME = { intro: '前奏猜歌', random: '随机猜歌', lyric: '歌词猜歌' };
+  var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌' };
 
   var state = null, rafId = null, locked = false, nextTimer = null;
 
@@ -112,7 +126,8 @@
 
   function nextQuestion() {
     if (state.over) return;
-    if (!endless && state.answered >= TOTAL) { endGame(); return; }
+    var lim = state.total || TOTAL;
+    if (!endless && state.answered >= lim) { endGame(); return; }
     var q = null, guard = 0;
     while (guard++ < 5000) {
       if (!state.queue.length) { endGame('题库用完啦'); return; }
@@ -153,16 +168,14 @@
 
     var begin = function () {
       var d = audio.duration || 30;
-      var start = 0;
-      if (play === 'random' || play === 'lyric') {
-        start = Math.max(0, Math.random() * Math.max(1, d - 15));
-      }
+      // 听声 / 看词 都从片段里的随机位置开始放
+      var start = Math.max(0, Math.random() * Math.max(1, d - 15));
       try { audio.currentTime = start; } catch (e) {}
       var pr = audio.play();
       var ok = function () {
         el.disc.classList.add('is-playing');
         el.discIco.textContent = '❚❚';
-        el.playerTip.textContent = play === 'intro' ? '🎵 播放中（试听片段）' : '🎵 播放中…';
+        el.playerTip.textContent = '🎵 播放中…';
       };
       var bad = function () { el.playerTip.textContent = '播放失败，再点一次'; };
       if (pr && pr.then) pr.then(ok).catch(bad); else ok();
@@ -284,8 +297,7 @@
 
     el.disc.hidden = isLyric;
     el.lyricBox.hidden = !isLyric;
-    el.playerTip.textContent = isLyric ? '根据歌词猜歌名'
-      : (play === 'intro' ? '点击播放（试听片段，非完整前奏）' : '点击唱片播放片段');
+    el.playerTip.textContent = isLyric ? '根据歌词猜歌名' : '点击播放片段';
     el.lyricText.textContent = isLyric ? lyricHint(q.correct) : '';
 
     // 选项 / 填空
@@ -487,8 +499,24 @@
 
     saveScore();
 
+    if (state.take && takeCtx) {
+      UserAPI.submitResult(takeCtx.code, {
+        player: myUser || ('游客' + String(UserAPI.myPid()).slice(-4)),
+        score: state.score,
+        right: state.right,
+        total: state.answered
+      }, function () {});
+    }
+
     el.rank.textContent = r;
-    el.rankLabel.textContent = reason ? (reason + ' · ' + label) : label;
+    var isBest = false;
+    try {
+      var bkey = 'gs_best_' + pool + '_' + play;
+      var bprev = parseInt(window.localStorage.getItem(bkey) || '0', 10);
+      if (state.score > bprev) { window.localStorage.setItem(bkey, String(state.score)); isBest = true; }
+    } catch (e) {}
+    el.rankLabel.textContent = (reason ? (reason + ' · ' + label) : (isBest ? (label + ' · 新纪录！') : label)) +
+      (state.take ? ' · 成绩已交给出题人' : '');
     el.finalScore.textContent = fmt(state.score);
     el.statRight.textContent = state.right;
     el.statTotal.textContent = state.answered;
@@ -664,7 +692,7 @@
       { k: 'mode', name: '玩法', opts: [['speed', '有限题·比速度'], ['timed', '限时·比总分']] },
       { k: 'rounds', name: '题目数量', opts: [[5, '5 题'], [10, '10 题'], [15, '15 题'], [20, '20 题']], show: s.mode === 'speed' },
       { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
-      { k: 'play', name: '题目类型', opts: [['intro', '前奏'], ['random', '随机'], ['lyric', '歌词']] }
+      { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词']] }
     ];
     el.roomSettings.innerHTML = '';
     defs.forEach(function (d) {
@@ -842,6 +870,149 @@
     show('s-start');
   }
 
+  /* ================= 账号 ================= */
+  var myUser = null;
+
+  function refreshUserUI() {
+    if (el.quizUser) el.quizUser.textContent = myUser ? ('👤 ' + myUser) : '未登录';
+  }
+  function goAccount() {
+    show('s-login');
+    if (el.accName) el.accName.value = UserAPI.savedName() || '';
+    if (el.accPwd) el.accPwd.value = '';
+    if (el.accHint) {
+      el.accHint.classList.remove('is-warn');
+      el.accHint.innerHTML = '轻量账号：密码只做简单哈希后存在公开频道上，<b>别用重要密码</b>。';
+    }
+  }
+  function accWarn(msg, input) {
+    if (el.accHint) {
+      el.accHint.textContent = '⚠️ ' + msg;
+      el.accHint.classList.add('is-warn');
+    }
+    if (input) {
+      input.classList.add('is-error');
+      try { input.focus(); } catch (e) {}
+      setTimeout(function () { input.classList.remove('is-error'); }, 1500);
+    }
+    sfxWrong();
+  }
+
+  /* ================= 出题 / 答题 ================= */
+  var mkPicked = [], mkPlay = 'sound', mkFill = 0;
+  var currentQuizCode = null;
+  var takeCtx = null;
+
+  function goQuiz() {
+    myUser = UserAPI.savedName() || null;
+    refreshUserUI();
+    show('s-quiz');
+    renderPicked();
+    if (el.tkHint) { el.tkHint.textContent = ''; el.tkHint.classList.remove('is-warn'); }
+  }
+
+  function renderPicked() {
+    if (!el.mkCount) return;
+    el.mkCount.textContent = '已选 ' + mkPicked.length + ' 首';
+    el.mkPicked.innerHTML = '';
+    mkPicked.forEach(function (s, i) {
+      var d = document.createElement('div');
+      d.className = 'picked-item';
+      var t = document.createElement('span'); t.textContent = s.t;
+      var b = document.createElement('button'); b.textContent = '✕'; b.title = '移除';
+      b.addEventListener('click', function () { mkPicked.splice(i, 1); renderPicked(); });
+      d.appendChild(t); d.appendChild(b);
+      el.mkPicked.appendChild(d);
+    });
+  }
+
+  function searchSongs(q) {
+    q = (q || '').trim().toLowerCase();
+    el.mkResults.innerHTML = '';
+    if (!q) return;
+    var hits = DB.filter(function (s) {
+      return s.t.toLowerCase().indexOf(q) >= 0 || s.a.toLowerCase().indexOf(q) >= 0;
+    }).slice(0, 20);
+    if (!hits.length) {
+      var e = document.createElement('p');
+      e.className = 'empty-tip'; e.textContent = '没搜到，换个词试试';
+      el.mkResults.appendChild(e);
+      return;
+    }
+    hits.forEach(function (s) {
+      var b = document.createElement('button');
+      b.className = 'song-item';
+      b.innerHTML = '<span class="si-t"></span><span class="si-a"></span><span class="si-add">＋</span>';
+      b.querySelector('.si-t').textContent = s.t;
+      b.querySelector('.si-a').textContent = s.a;
+      b.addEventListener('click', function () {
+        if (mkPicked.some(function (x) { return x.a === s.a && x.t === s.t; })) return;
+        mkPicked.push({ a: s.a, t: s.t });
+        renderPicked();
+        sfxTap();
+      });
+      el.mkResults.appendChild(b);
+    });
+  }
+
+  function renderQuizResults(code, res) {
+    if (code !== currentQuizCode) return;
+    var list = Object.keys(res || {}).map(function (k) { return res[k]; })
+      .sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+    el.mkRcount.textContent = list.length + ' 人';
+    el.mkResultsList.innerHTML = '';
+    if (!list.length) {
+      var e = document.createElement('p');
+      e.className = 'empty-tip'; e.textContent = '还没人作答';
+      el.mkResultsList.appendChild(e);
+      return;
+    }
+    list.forEach(function (r) {
+      var d = document.createElement('div');
+      d.className = 'result-row';
+      d.innerHTML = '<div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
+      d.querySelector('.rr-n').textContent = r.player;
+      d.querySelector('.rr-s').textContent = '答对 ' + r.right + '/' + r.total;
+      d.querySelector('.rr-v').textContent = fmt(r.score);
+      el.mkResultsList.appendChild(d);
+    });
+  }
+
+  function startTakeQuiz(code, paper) {
+    var pool = [];
+    (paper.songs || []).forEach(function (x) {
+      var s = findSong(x.a + '|' + x.t);
+      if (s) pool.push(s);
+    });
+    if (!pool.length) { alert('这份题卷是空的'); return; }
+
+    takeCtx = { code: code, paper: paper };
+    play = paper.play;
+    fill = !!paper.fill;
+    isMulti = false; room = null; mState = null;
+    stopRoomPoll();
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+
+    el.liveRank.hidden = true;
+    el.board.hidden = true;
+    state = {
+      allPool: uniqByTitle(DB.slice()),
+      queue: shuffle(pool.slice()),
+      used: {},
+      answered: 0, score: 0, right: 0,
+      usedSec: 0, tStart: 0, current: null, over: false,
+      total: pool.length, take: true
+    };
+    el.hudScore.textContent = '0';
+    el.hudRight.textContent = '0';
+    el.dots.innerHTML = '';
+    el.dots.hidden = false;
+    pool.forEach(function () { var d = document.createElement('span'); d.className = 'dot'; el.dots.appendChild(d); });
+    el.badge.textContent = '答题 · ' + (PLAY_NAME[paper.play] || '') + ' · 出题人 ' + (paper.author || '匿名');
+    show('s-game');
+    nextQuestion();
+  }
+
   /* ---------------- 事件 ---------------- */
   el.poolTiles.forEach(function (t) {
     t.addEventListener('click', function () {
@@ -868,8 +1039,14 @@
   toggleSwitch(el.swEndless, function (v) { endless = v; });
 
   el.btnStart.addEventListener('click', startGame);
-  el.btnAgain.addEventListener('click', startGame);
-  el.btnHome.addEventListener('click', function () { show('s-start'); });
+  el.btnAgain.addEventListener('click', function () {
+    if (room) { show('s-room'); renderRoom(); return; }   // 多人：回房间等下一局
+    startGame();
+  });
+  el.btnHome.addEventListener('click', function () {
+    if (room) { leaveRoom(); return; }
+    show('s-start');
+  });
   el.disc.addEventListener('click', playClip);
   el.btnListen.addEventListener('click', playClip);
   el.btnRules.addEventListener('click', function () { openModal('📖 规则说明', rulesHTML()); });
@@ -947,7 +1124,107 @@
     ]);
   });
 
+  /* ---- 账号事件 ---- */
+  el.btnAccount.addEventListener('click', goAccount);
+  el.btnLoginBack.addEventListener('click', function () { show('s-start'); });
+  el.btnLogin.addEventListener('click', function () {
+    var n = (el.accName.value || '').trim().slice(0, 12);
+    var p = (el.accPwd.value || '');
+    if (!n) return accWarn('请输入用户名', el.accName);
+    if (!p) return accWarn('请输入密码', el.accPwd);
+    el.btnLogin.disabled = true;
+    UserAPI.login(n, p, function (err) {
+      el.btnLogin.disabled = false;
+      if (err) return accWarn(err);
+      myUser = n; refreshUserUI();
+      openModal('登录成功', '<p class="empty-tip">欢迎回来，「' + n + '」</p>');
+    });
+  });
+  el.btnRegister.addEventListener('click', function () {
+    var n = (el.accName.value || '').trim().slice(0, 12);
+    var p = (el.accPwd.value || '');
+    if (!n) return accWarn('请输入用户名', el.accName);
+    if (p.length < 4) return accWarn('密码至少 4 位', el.accPwd);
+    el.btnRegister.disabled = true;
+    UserAPI.register(n, p, function (err) {
+      el.btnRegister.disabled = false;
+      if (err) return accWarn(err);
+      myUser = n; refreshUserUI();
+      openModal('注册成功', '<p class="empty-tip">已登录为「' + n + '」</p>');
+    });
+  });
+
+  /* ---- 出题 / 答题事件 ---- */
+  el.btnQuiz.addEventListener('click', goQuiz);
+  el.btnQuizBack.addEventListener('click', function () { show('s-start'); });
+  el.quizTabs.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    Array.prototype.forEach.call(el.quizTabs.querySelectorAll('button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    var tab = b.getAttribute('data-tab');
+    el.paneMake.hidden = tab !== 'make';
+    el.paneTake.hidden = tab !== 'take';
+  });
+  el.mkPlay.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    Array.prototype.forEach.call(el.mkPlay.querySelectorAll('button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on'); mkPlay = b.getAttribute('data-v');
+  });
+  el.mkFill.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    Array.prototype.forEach.call(el.mkFill.querySelectorAll('button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on'); mkFill = parseInt(b.getAttribute('data-v'), 10);
+  });
+  el.mkSearch.addEventListener('input', function () { searchSongs(this.value); });
+  el.btnMake.addEventListener('click', function () {
+    if (!mkPicked.length) return alert('先挑至少 1 首歌');
+    if (!myUser) { openModal('还没登录', '<p class="empty-tip">出题需要一个用户名，去「账号」里注册或登录一下。</p>'); return; }
+    el.btnMake.disabled = true;
+    UserAPI.publishQuiz({ author: myUser, play: mkPlay, fill: mkFill === 1, songs: mkPicked.slice() }, function (err, p) {
+      el.btnMake.disabled = false;
+      if (err) return alert(err);
+      currentQuizCode = p.code;
+      el.mkCode.textContent = p.code;
+      el.mkCodeBox.hidden = false;
+      el.mkResultBlock.hidden = false;
+      UserAPI.watchResults(p.code, renderQuizResults);
+    });
+  });
+  el.tkCode.addEventListener('input', function () {
+    this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  });
+  el.btnTake.addEventListener('click', function () {
+    var code = (el.tkCode.value || '').trim().toUpperCase();
+    if (code.length !== 6) {
+      el.tkHint.textContent = '⚠️ 答题码是 6 位';
+      el.tkHint.classList.add('is-warn');
+      sfxWrong();
+      return;
+    }
+    el.tkHint.classList.remove('is-warn');
+    el.tkHint.textContent = '正在获取题卷…';
+    UserAPI.fetchQuiz(code, function (err, paper) {
+      if (err) {
+        el.tkHint.textContent = '⚠️ ' + err;
+        el.tkHint.classList.add('is-warn');
+        return;
+      }
+      el.tkHint.textContent = '';
+      startTakeQuiz(code, paper);
+    });
+  });
+
   el.btnQuit.addEventListener('click', function () {
+    if (isMulti) {
+      openModal('退出对局？', '<p class="empty-tip">退出后你会离开这个房间。</p>', [
+        { label: '继续玩', cls: 'btn-ghost', fn: closeModal },
+        { label: '退出房间', cls: 'btn-primary', fn: function () { closeModal(); leaveRoom(); } }
+      ]);
+      return;
+    }
     if (!state || state.over) { show('s-start'); return; }
     openModal('退出本局？', '<p class="empty-tip">当前得分 ' + fmt(state.score) + ' 分，退出后会结算。</p>', [
       { label: '继续玩', cls: 'btn-ghost', fn: closeModal },
