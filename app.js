@@ -884,14 +884,32 @@
     this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
   });
 
+  function lobbyWarn(msg, input) {
+    if (el.lobbyHint) {
+      el.lobbyHint.textContent = msg;
+      el.lobbyHint.classList.add('is-warn');
+    }
+    if (input) {
+      input.classList.add('is-error');
+      try { input.focus(); } catch (e) {}
+      setTimeout(function () { input.classList.remove('is-error'); }, 1500);
+    }
+    sfxWrong();
+  }
+  function lobbyInfo(msg) {
+    if (!el.lobbyHint) return;
+    el.lobbyHint.classList.remove('is-warn');
+    el.lobbyHint.textContent = msg;
+  }
+
   el.btnCreate.addEventListener('click', function () {
     var name = (el.lobbyName.value || '').trim().slice(0, 8);
-    if (!name) { el.lobbyHint.textContent = '先给自己起个名字'; return; }
+    if (!name) return lobbyWarn('⚠️ 请先输入你的名字', el.lobbyName);
     saveName(name);
-    el.lobbyHint.textContent = '正在创建房间…';
+    lobbyInfo('正在创建房间…');
     RoomAPI.create(name, function (err, r) {
-      if (err) { el.lobbyHint.textContent = err; return; }
-      el.lobbyHint.textContent = '';
+      if (err) return lobbyWarn('⚠️ ' + err);
+      lobbyInfo('房间码发给朋友，他们在自己手机上输码就能进来。');
       enterRoom(r);
     });
   });
@@ -899,15 +917,22 @@
   el.btnJoin.addEventListener('click', function () {
     var name = (el.lobbyName.value || '').trim().slice(0, 8);
     var code = (el.joinCode.value || '').trim().toUpperCase();
-    if (!name) { el.lobbyHint.textContent = '先给自己起个名字'; return; }
-    if (code.length !== 6) { el.lobbyHint.textContent = '房间码是 6 位'; return; }
+    if (!name) return lobbyWarn('⚠️ 请先输入你的名字', el.lobbyName);
+    if (code.length !== 6) return lobbyWarn('⚠️ 房间码是 6 位', el.joinCode);
     saveName(name);
-    el.lobbyHint.textContent = '正在加入…';
+    lobbyInfo('正在加入…');
     RoomAPI.join(code, name, function (err, r) {
-      if (err) { el.lobbyHint.textContent = err; return; }
-      el.lobbyHint.textContent = '';
+      if (err) return lobbyWarn('⚠️ ' + err);
+      lobbyInfo('');
       enterRoom(r);
     });
+  });
+
+  el.lobbyName.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); if (el.joinCode) el.joinCode.focus(); }
+  });
+  el.joinCode.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); el.btnJoin.click(); }
   });
 
   el.btnRoomStart.addEventListener('click', function () {

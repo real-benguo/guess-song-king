@@ -367,6 +367,12 @@ body{
 }
 .text-input::placeholder{color:#6b7085;}
 .text-input:focus{border-color:rgba(124,92,255,.7);background:var(--card-hi);}
+.text-input.is-error{
+  border-color:var(--bad) !important;
+  background:rgba(244,63,94,.12) !important;
+  animation:shake .42s ease;
+}
+.hint.is-warn{color:#ff8fa3;font-weight:700;font-size:13.5px;}
 .code-input{
   flex:1;min-width:0;letter-spacing:4px;text-align:center;font-weight:800;font-size:19px;text-transform:uppercase;
 }
