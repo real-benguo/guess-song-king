@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0b14" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>猜歌王 · 华语流行猜歌</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="bg-glow"></div>
+<div id="loading"><div class="spin"></div><p>正在载入曲库…</p></div>
+
+<main id="app">
+
+  <!-- ============ 开始页 ============ -->
+  <section class="screen is-active" id="s-start">
+    <div class="logo">🎧</div>
+    <h1 class="title">猜歌王</h1>
+    <p class="subtitle">华语流行 · 听歌猜名</p>
+
+    <div class="group">
+      <div class="group-label">选曲库</div>
+      <div class="tiles" id="pool-tiles">
+        <button class="tile" data-pool="jay"><span class="tile-main">周杰伦</span><span class="tile-sub" data-count="jay">—</span></button>
+        <button class="tile is-active" data-pool="zh"><span class="tile-main">国语</span><span class="tile-sub" data-count="zh">—</span></button>
+        <button class="tile" data-pool="yue"><span class="tile-main">粤语</span><span class="tile-sub" data-count="yue">—</span></button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">选玩法</div>
+      <div class="tiles" id="play-tiles">
+        <button class="tile is-active" data-play="intro"><span class="tile-main">前奏</span><span class="tile-sub">听开头</span></button>
+        <button class="tile" data-play="random"><span class="tile-main">随机</span><span class="tile-sub">听片段</span></button>
+        <button class="tile" data-play="lyric"><span class="tile-main">歌词</span><span class="tile-sub">看词猜</span></button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">挑战选项</div>
+      <div class="switches">
+        <button class="switch" id="sw-fill" aria-pressed="false">
+          <span class="sw-txt"><b>填空作答</b><i>不给选项，手打歌名 · 得分 ×2</i></span>
+          <span class="sw-dot"></span>
+        </button>
+        <button class="switch" id="sw-endless" aria-pressed="false">
+          <span class="sw-txt"><b>无限模式</b><i>一直出题，直到你退出或曲库用完</i></span>
+          <span class="sw-dot"></span>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-start">开始游戏</button>
+
+    <div class="foot-links">
+      <button id="btn-rules">📖 规则说明</button>
+      <button id="btn-scores">🏆 今日分数</button>
+    </div>
+  </section>
+
+  <!-- ============ 游戏页 ============ -->
+  <section class="screen" id="s-game">
+    <div class="game-top">
+      <div class="badge" id="badge">周杰伦专项 · 前奏猜歌</div>
+      <button class="btn-quit" id="btn-quit">退出</button>
+    </div>
+
+    <header class="hud">
+      <div class="hud-item"><span class="hud-k">题目</span><span class="hud-v" id="hud-idx">1/10</span></div>
+      <div class="hud-item"><span class="hud-k">得分</span><span class="hud-v" id="hud-score">0</span></div>
+      <div class="hud-item"><span class="hud-k">答对</span><span class="hud-v" id="hud-right">0</span></div>
+    </header>
+
+    <div class="player">
+      <button class="disc" id="disc" aria-label="播放片段">
+        <span class="disc-ring"></span>
+        <span class="disc-core" id="disc-ico">▶</span>
+      </button>
+
+      <div class="lyric-box" id="lyric-box" hidden>
+        <p class="lyric-text" id="lyric-text"></p>
+        <button class="btn-listen" id="btn-listen">🔊 听一下这段</button>
+      </div>
+
+      <p class="player-tip" id="player-tip">点击播放片段</p>
+      <div class="timer"><div class="timer-fill" id="timer-fill"></div></div>
+      <div class="volume">
+        <span class="vol-ico" id="vol-ico">🔊</span>
+        <input type="range" id="volume" min="0" max="100" value="100" aria-label="音量" />
+      </div>
+    </div>
+
+    <div class="options" id="options"></div>
+
+    <div class="fill-area" id="fill-area" hidden>
+      <input type="text" id="fill-input" placeholder="输入歌名后按回车" autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false" />
+      <button class="btn btn-primary" id="btn-submit">确定</button>
+    </div>
+
+    <div class="dots" id="dots"></div>
+  </section>
+
+  <!-- ============ 结算页 ============ -->
+  <section class="screen" id="s-over">
+    <div class="rank" id="rank">A</div>
+    <p class="rank-label" id="rank-label">还不错</p>
+    <div class="final-score"><span id="final-score">0</span><small>分</small></div>
+
+    <div class="stats">
+      <div class="stat"><b id="stat-right">0</b><span>答对</span></div>
+      <div class="stat"><b id="stat-total">0</b><span>题数</span></div>
+      <div class="stat"><b id="stat-acc">0%</b><span>正确率</span></div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-again">再来一局</button>
+    <button class="btn btn-ghost" id="btn-home">回主界面</button>
+  </section>
+
+</main>
+
+<!-- ============ 弹窗 ============ -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-card">
+    <h3 id="modal-title">规则说明</h3>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions">
+      <button class="btn btn-primary" id="modal-close">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script src="data/songs.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
