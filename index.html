@@ -59,7 +59,8 @@
     <div class="foot-links">
       <button id="btn-rules">📖 规则</button>
       <button id="btn-scores">🏆 分数</button>
-      <button id="btn-account">👤 账号</button>
+      <button id="btn-friends">👥 好友</button>
+      <button id="btn-account">👤 我的</button>
     </div>
   </section>
 
@@ -248,6 +249,78 @@
       </div>
       <button class="btn btn-primary" id="btn-take">开始答题</button>
       <p class="hint" id="tk-hint"></p>
+    </div>
+  </section>
+
+  <!-- ============ 个人主页 ============ -->
+  <section class="screen" id="s-profile">
+    <div class="game-top">
+      <div class="badge">个人主页</div>
+      <button class="btn-quit" id="btn-profile-back">返回</button>
+    </div>
+
+    <div class="profile-head">
+      <div class="avatar-big" id="pf-avatar">🐱</div>
+      <div class="pf-name" id="pf-nick">—</div>
+      <div class="pf-sub" id="pf-account">账号：—</div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">换个头像</div>
+      <div class="avatar-picker" id="pf-avatars"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">改昵称（账号名不变）</div>
+      <div class="join-row">
+        <input type="text" id="pf-nick-input" class="text-input" maxlength="12" placeholder="新昵称" autocomplete="off" />
+        <button class="btn btn-primary btn-sm" id="btn-pf-nick">保存</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">最近答题 <span id="pf-sc-count">0 次</span></div>
+      <div class="results" id="pf-scores"></div>
+    </div>
+
+    <button class="btn btn-ghost" id="btn-logout">退出登录</button>
+  </section>
+
+  <!-- ============ 好友 ============ -->
+  <section class="screen" id="s-friends">
+    <div class="game-top">
+      <div class="badge" id="fr-me">好友</div>
+      <button class="btn-quit" id="btn-friends-back">返回</button>
+    </div>
+
+    <div class="seg seg-lg" id="friend-tabs">
+      <button class="on" data-tab="list">好友</button>
+      <button data-tab="add">加好友</button>
+      <button data-tab="req">申请 <span id="req-badge"></span></button>
+    </div>
+
+    <div class="pane" id="pane-flist">
+      <div class="results" id="friend-list"></div>
+    </div>
+
+    <div class="pane" id="pane-fadd" hidden>
+      <div class="group">
+        <div class="group-label">搜索账号加好友</div>
+        <div class="join-row">
+          <input type="text" id="fr-search" class="text-input" placeholder="输入对方账号名" autocomplete="off" />
+          <button class="btn btn-primary btn-sm" id="btn-fr-search">搜索</button>
+        </div>
+      </div>
+      <div class="results" id="fr-search-result"></div>
+
+      <div class="group">
+        <div class="group-label">黑名单 <span id="bl-count">0 人</span></div>
+        <div class="results" id="bl-list"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-freq" hidden>
+      <div class="results" id="req-list"></div>
     </div>
   </section>
 

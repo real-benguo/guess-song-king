@@ -57,7 +57,20 @@
     btnMake: $('btn-make'),
     mkCodeBox: $('mk-code-box'), mkCode: $('mk-code'),
     mkResultBlock: $('mk-result-block'), mkRcount: $('mk-rcount'), mkResultsList: $('mk-results-list'),
-    tkCode: $('tk-code'), btnTake: $('btn-take'), tkHint: $('tk-hint')
+    tkCode: $('tk-code'), btnTake: $('btn-take'), tkHint: $('tk-hint'),
+    // 个人主页
+    btnProfileBack: $('btn-profile-back'),
+    pfAvatar: $('pf-avatar'), pfNick: $('pf-nick'), pfAccount: $('pf-account'),
+    pfAvatars: $('pf-avatars'), pfNickInput: $('pf-nick-input'), btnPfNick: $('btn-pf-nick'),
+    pfScCount: $('pf-sc-count'), pfScores: $('pf-scores'), btnLogout: $('btn-logout'),
+    // 好友
+    btnFriends: $('btn-friends'), frMe: $('fr-me'), btnFriendsBack: $('btn-friends-back'),
+    friendTabs: $('friend-tabs'),
+    paneFlist: $('pane-flist'), paneFadd: $('pane-fadd'), paneFreq: $('pane-freq'),
+    friendList: $('friend-list'),
+    frSearch: $('fr-search'), btnFrSearch: $('btn-fr-search'), frSearchResult: $('fr-search-result'),
+    blCount: $('bl-count'), blList: $('bl-list'),
+    reqBadge: $('req-badge'), reqList: $('req-list')
   };
 
   var audio = new Audio();
@@ -277,10 +290,11 @@
   function updateHud() {
     el.hudScore.textContent = fmt(state.score);
     el.hudRight.textContent = state.right;
+    var total = state.total || TOTAL;
     var no = state.answered + 1;
     el.hudIdx.textContent = endless
       ? ('第 ' + no + ' 题')
-      : (Math.min(no, TOTAL) + '/' + TOTAL);
+      : (Math.min(no, total) + '/' + total);
   }
 
   /* ---------------- 渲染 ---------------- */
@@ -502,6 +516,13 @@
     if (state.take && takeCtx) {
       UserAPI.submitResult(takeCtx.code, {
         player: myUser || ('游客' + String(UserAPI.myPid()).slice(-4)),
+        score: state.score,
+        right: state.right,
+        total: state.answered
+      }, function () {});
+      UserAPI.pushScore({
+        code: takeCtx.code,
+        author: takeCtx.paper.author,
         score: state.score,
         right: state.right,
         total: state.answered
@@ -970,7 +991,8 @@
     list.forEach(function (r) {
       var d = document.createElement('div');
       d.className = 'result-row';
-      d.innerHTML = '<div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
+      d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
+      d.querySelector('.av-sm').textContent = r.avatar || '👤';
       d.querySelector('.rr-n').textContent = r.player;
       d.querySelector('.rr-s').textContent = '答对 ' + r.right + '/' + r.total;
       d.querySelector('.rr-v').textContent = fmt(r.score);
@@ -1011,6 +1033,259 @@
     el.badge.textContent = '答题 · ' + (PLAY_NAME[paper.play] || '') + ' · 出题人 ' + (paper.author || '匿名');
     show('s-game');
     nextQuestion();
+  }
+
+  /* ================= 个人主页 ================= */
+  var AVATARS = ['🐱','🐶','🐼','🦊','🐯','🦁','🐸','🐵','🐰','🐨','🦄','🐲','👻','🤖','🎧','🎤','🎸','🎮','⚽','🍜','🌙','⭐','🔥','💎'];
+  var myProfile = null;
+
+  function timeAgo(ts) {
+    if (!ts) return '';
+    var d = Math.floor((Date.now() - ts) / 1000);
+    if (d < 60) return '刚刚';
+    if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+    if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+    return Math.floor(d / 86400) + ' 天前';
+  }
+
+  function scoreRow(s) {
+    var d = document.createElement('div');
+    d.className = 'result-row';
+    d.innerHTML = '<div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
+    d.querySelector('.rr-n').textContent = '出题人 ' + (s.author || '匿名');
+    d.querySelector('.rr-s').textContent = '答对 ' + s.right + '/' + s.total + ' · ' + timeAgo(s.at);
+    d.querySelector('.rr-v').textContent = fmt(s.score);
+    return d;
+  }
+
+  function goProfile() {
+    var me = UserAPI.savedName();
+    if (!me) { goAccount(); return; }
+    show('s-profile');
+    UserAPI.getProfile(me, function (err, p) {
+      if (err) { alert(err); return; }
+      myProfile = p;
+      renderProfile();
+      UserAPI.getScores(me, renderProfileScores);
+    });
+  }
+
+  function renderProfile() {
+    if (!myProfile) return;
+    el.pfAvatar.textContent = myProfile.avatar || '👤';
+    el.pfNick.textContent = myProfile.nick || myProfile.name;
+    el.pfAccount.textContent = '账号：' + myProfile.name;
+    el.pfNickInput.value = '';
+    el.pfAvatars.innerHTML = '';
+    AVATARS.forEach(function (a) {
+      var b = document.createElement('button');
+      b.className = 'av-item' + (a === myProfile.avatar ? ' on' : '');
+      b.textContent = a;
+      b.addEventListener('click', function () {
+        UserAPI.updateProfile({ avatar: a }, function (err, rec) {
+          if (err) { alert(err); return; }
+          myProfile = rec; renderProfile(); sfxTap();
+        });
+      });
+      el.pfAvatars.appendChild(b);
+    });
+  }
+
+  function renderProfileScores(list) {
+    list = list || [];
+    el.pfScCount.textContent = list.length + ' 次';
+    el.pfScores.innerHTML = '';
+    if (!list.length) {
+      var e = document.createElement('p');
+      e.className = 'empty-tip'; e.textContent = '还没答过题';
+      el.pfScores.appendChild(e);
+      return;
+    }
+    list.slice().reverse().forEach(function (s) { el.pfScores.appendChild(scoreRow(s)); });
+  }
+
+  /* ================= 好友 ================= */
+  function goFriends() {
+    var me = UserAPI.savedName();
+    if (!me) { goAccount(); return; }
+    show('s-friends');
+    el.frMe.textContent = '👤 ' + me;
+    loadFriends();
+    loadRequests();
+    loadBlocked();
+    UserAPI.watchSelf(me, function () { loadRequests(); loadFriends(); });
+  }
+
+  function loadFriends() {
+    UserAPI.getFriends(function (err, list) {
+      list = list || [];
+      if (!list.length) {
+        el.friendList.innerHTML = '<p class="empty-tip">还没有好友，去「加好友」搜账号吧</p>';
+        return;
+      }
+      UserAPI.getProfiles(list.map(function (x) { return x.name; }), function (e2, profs) {
+        el.friendList.innerHTML = '';
+        list.forEach(function (f) {
+          var p = profs[f.name] || {};
+          var d = document.createElement('div');
+          d.className = 'friend-item';
+          d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="fi-n"></div><div class="fi-s"></div></div><div class="fi-go">›</div>';
+          d.querySelector('.av-sm').textContent = p.avatar || '👤';
+          d.querySelector('.fi-n').textContent = p.nick || f.name;
+          d.querySelector('.fi-s').textContent = '@' + f.name;
+          d.addEventListener('click', function () { openFriendMenu(f.name, p); });
+          el.friendList.appendChild(d);
+        });
+      });
+    });
+  }
+
+  function loadRequests() {
+    UserAPI.getRequests(function (err, list) {
+      list = list || [];
+      if (el.reqBadge) el.reqBadge.textContent = list.length ? '(' + list.length + ')' : '';
+      if (!list.length) {
+        el.reqList.innerHTML = '<p class="empty-tip">没有新的好友申请</p>';
+        return;
+      }
+      UserAPI.getProfiles(list.map(function (x) { return x.from; }), function (e2, profs) {
+        el.reqList.innerHTML = '';
+        list.forEach(function (r) {
+          var p = profs[r.from] || {};
+          var d = document.createElement('div');
+          d.className = 'result-row';
+          d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div>';
+          d.querySelector('.av-sm').textContent = p.avatar || '👤';
+          d.querySelector('.rr-n').textContent = p.nick || r.from;
+          d.querySelector('.rr-s').textContent = '@' + r.from + ' 想加你好友';
+          var yes = document.createElement('button');
+          yes.className = 'btn btn-primary btn-sm'; yes.textContent = '同意';
+          yes.addEventListener('click', function () { UserAPI.acceptRequest(r.from, function () { loadRequests(); loadFriends(); }); });
+          var no = document.createElement('button');
+          no.className = 'btn btn-ghost btn-sm'; no.textContent = '忽略';
+          no.style.marginLeft = '6px';
+          no.addEventListener('click', function () { UserAPI.rejectRequest(r.from, function () { loadRequests(); }); });
+          var box = d.querySelector('div[style]');
+          box.appendChild(yes); box.appendChild(no);
+          el.reqList.appendChild(d);
+        });
+      });
+    });
+  }
+
+  function loadBlocked() {
+    UserAPI.getBlocked(function (err, list) {
+      list = list || [];
+      el.blCount.textContent = list.length + ' 人';
+      el.blList.innerHTML = '';
+      if (!list.length) {
+        el.blList.innerHTML = '<p class="empty-tip">黑名单是空的</p>';
+        return;
+      }
+      list.forEach(function (b) {
+        var d = document.createElement('div');
+        d.className = 'result-row';
+        d.innerHTML = '<div style="flex:1;min-width:0"><div class="rr-n"></div></div>';
+        d.querySelector('.rr-n').textContent = b.name;
+        var btn = document.createElement('button');
+        btn.className = 'btn btn-ghost btn-sm'; btn.textContent = '移出黑名单';
+        btn.addEventListener('click', function () { UserAPI.unblockUser(b.name, function () { loadBlocked(); }); });
+        d.appendChild(btn);
+        el.blList.appendChild(d);
+      });
+    });
+  }
+
+  function openFriendMenu(name, prof) {
+    openModal('@' + name,
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      '<button class="btn btn-primary" id="fm-dm">💬 发私信</button>' +
+      '<button class="btn btn-multi" id="fm-invite">🎮 邀请对战</button>' +
+      '<button class="btn btn-ghost" id="fm-score">🏆 看 TA 的成绩</button>' +
+      '<button class="btn btn-ghost" id="fm-del">🗑 删除好友</button>' +
+      '<button class="btn btn-ghost" id="fm-block">🚫 拉黑</button>' +
+      '</div>',
+      [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+
+    var g = function (id) { return document.getElementById(id); };
+    g('fm-dm').addEventListener('click', function () { closeModal(); openChat(name, prof); });
+    g('fm-invite').addEventListener('click', function () { closeModal(); inviteFriend(name); });
+    g('fm-score').addEventListener('click', function () { closeModal(); viewFriendScores(name, prof); });
+    g('fm-del').addEventListener('click', function () { closeModal(); UserAPI.removeFriend(name, function () { loadFriends(); }); });
+    g('fm-block').addEventListener('click', function () {
+      closeModal();
+      openModal('拉黑 @' + name + '？',
+        '<p class="empty-tip">拉黑后你们不再是好友，对方也无法再向你发好友申请（除非你把他移出黑名单）。</p>',
+        [
+          { label: '取消', cls: 'btn-ghost', fn: closeModal },
+          { label: '确定拉黑', cls: 'btn-primary', fn: function () { closeModal(); UserAPI.blockUser(name, function () { loadFriends(); loadBlocked(); }); } }
+        ]);
+    });
+  }
+
+  function openChat(name, prof) {
+    openModal('💬 ' + ((prof && prof.nick) || name),
+      '<div class="chat-box" id="chat-box"><p class="empty-tip">还没有消息</p></div>' +
+      '<div class="join-row"><input type="text" id="chat-input" class="text-input" placeholder="说点什么…" maxlength="200" />' +
+      '<button class="btn btn-primary btn-sm" id="chat-send">发送</button></div>',
+      [{ label: '关闭', cls: 'btn-ghost', fn: function () { UserAPI.watchInbox(null); closeModal(); } }]);
+
+    function render(list) {
+      var box = document.getElementById('chat-box');
+      if (!box) return;
+      box.innerHTML = '';
+      if (!list.length) { box.innerHTML = '<p class="empty-tip">还没有消息</p>'; return; }
+      list.forEach(function (m) {
+        var d = document.createElement('div');
+        d.className = 'chat-msg ' + (m.from === UserAPI.savedName() ? 'me' : 'you');
+        d.innerHTML = '<div class="cm-x"></div><div class="cm-t"></div>';
+        d.querySelector('.cm-x').textContent = m.text;
+        d.querySelector('.cm-t').textContent = timeAgo(m.at);
+        box.appendChild(d);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+    function reload() { UserAPI.getDMs(name, function (e, list) { render(list); }); }
+    reload();
+    UserAPI.watchInbox(function (topic, data) {
+      if (data && (data.from === name || data.to === name)) reload();
+    });
+    var send = function () {
+      var inp = document.getElementById('chat-input');
+      if (!inp) return;
+      var v = (inp.value || '').trim();
+      if (!v) return;
+      inp.value = '';
+      UserAPI.sendDM(name, v, function () { setTimeout(reload, 250); });
+    };
+    document.getElementById('chat-send').addEventListener('click', send);
+    document.getElementById('chat-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); send(); }
+    });
+  }
+
+  function inviteFriend(name) {
+    RoomAPI.create(UserAPI.savedName() || '房主', function (err, r) {
+      if (err) { alert(err); return; }
+      room = r; isMulti = true;
+      UserAPI.sendDM(name, '【对战邀请】房间码 ' + r.code + ' —— 打开猜歌王 → 多人对战 → 输码进来！', function () {});
+      openModal('已邀请 @' + name,
+        '<p class="empty-tip">房间码 <b>' + r.code + '</b> 已经私信给 TA。<br>你现在是房主，等人进来就能开始。</p>',
+        [{ label: '进入房间', cls: 'btn-primary', fn: function () { closeModal(); show('s-room'); renderRoom(); startRoomPoll(); } }]);
+    });
+  }
+
+  function viewFriendScores(name, prof) {
+    UserAPI.getScores(name, function (err, list) {
+      list = list || [];
+      openModal('🏆 ' + ((prof && prof.nick) || name) + ' 的成绩',
+        '<div class="results" id="fs-list"></div>',
+        [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+      var box = document.getElementById('fs-list');
+      if (!box) return;
+      if (!list.length) { box.innerHTML = '<p class="empty-tip">TA 还没有答题记录</p>'; return; }
+      list.slice().reverse().forEach(function (s) { box.appendChild(scoreRow(s)); });
+    });
   }
 
   /* ---------------- 事件 ---------------- */
@@ -1125,7 +1400,73 @@
   });
 
   /* ---- 账号事件 ---- */
-  el.btnAccount.addEventListener('click', goAccount);
+  el.btnAccount.addEventListener('click', goProfile);
+  el.btnFriends.addEventListener('click', goFriends);
+  el.btnProfileBack.addEventListener('click', function () { show('s-start'); });
+  el.btnFriendsBack.addEventListener('click', function () { show('s-start'); });
+  el.btnLogout.addEventListener('click', function () {
+    UserAPI.loggedOut(); myUser = null; refreshUserUI(); show('s-start');
+  });
+  el.btnPfNick.addEventListener('click', function () {
+    var v = (el.pfNickInput.value || '').trim().slice(0, 12);
+    if (!v) {
+      el.pfNickInput.classList.add('is-error');
+      setTimeout(function () { el.pfNickInput.classList.remove('is-error'); }, 1500);
+      sfxWrong();
+      return;
+    }
+    UserAPI.updateProfile({ nick: v }, function (err, rec) {
+      if (err) { alert(err); return; }
+      myProfile = rec; renderProfile();
+    });
+  });
+  el.friendTabs.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    Array.prototype.forEach.call(el.friendTabs.querySelectorAll('button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    var tab = b.getAttribute('data-tab');
+    el.paneFlist.hidden = tab !== 'list';
+    el.paneFadd.hidden = tab !== 'add';
+    el.paneFreq.hidden = tab !== 'req';
+    if (tab === 'req') loadRequests();
+    if (tab === 'add') loadBlocked();
+  });
+  el.btnFrSearch.addEventListener('click', function () {
+    var q = (el.frSearch.value || '').trim();
+    if (!q) {
+      el.frSearch.classList.add('is-error');
+      setTimeout(function () { el.frSearch.classList.remove('is-error'); }, 1500);
+      sfxWrong();
+      return;
+    }
+    el.frSearchResult.innerHTML = '<p class="empty-tip">搜索中…</p>';
+    UserAPI.getProfile(q, function (err, p) {
+      el.frSearchResult.innerHTML = '';
+      if (err || !p) {
+        el.frSearchResult.innerHTML = '<p class="empty-tip">没找到这个账号</p>';
+        return;
+      }
+      var d = document.createElement('div');
+      d.className = 'friend-item';
+      d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="fi-n"></div><div class="fi-s"></div></div>';
+      d.querySelector('.av-sm').textContent = p.avatar || '👤';
+      d.querySelector('.fi-n').textContent = p.nick || p.name;
+      d.querySelector('.fi-s').textContent = '@' + p.name;
+      var add = document.createElement('button');
+      add.className = 'btn btn-primary btn-sm';
+      add.textContent = '加好友';
+      add.addEventListener('click', function () {
+        add.disabled = true;
+        UserAPI.sendFriendRequest(p.name, function (err2) {
+          add.disabled = false;
+          alert(err2 ? err2 : '申请已发送，等对方同意');
+        });
+      });
+      d.appendChild(add);
+      el.frSearchResult.appendChild(d);
+    });
+  });
   el.btnLoginBack.addEventListener('click', function () { show('s-start'); });
   el.btnLogin.addEventListener('click', function () {
     var n = (el.accName.value || '').trim().slice(0, 12);
