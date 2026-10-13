@@ -235,6 +235,7 @@ window.UserAPI = (function () {
       if (!rec) return cb && cb('账号资料没读到，稍后再试');
       var out;
       try { out = fn(rec) || {}; } catch (e) { return cb && cb('资料更新失败'); }
+      if (out && out.fail) return cb && cb(out.fail, clone(rec), out);
       if (!(Number(rec.exp) >= 0)) rec.exp = 0;
       rec.updatedAt = Date.now();
       client.publish(tU(me), JSON.stringify(rec), { qos: 1, retain: true });
@@ -262,7 +263,12 @@ window.UserAPI = (function () {
             name: name, nick: name, hash: hash(name + '::' + pwd),
             avatar: '🐱', createdAt: Date.now(),
             exp: 0,                                  // 经验：永不清零
-            checkin: { last: '', streak: 0 }         // 每日签到 { 上次日期, 连续天数 }
+            coins: 0,                                // 金币
+            checkin: { last: '', streak: 0 },        // 每日签到 { 上次日期, 连续天数 }
+            items: {},                               // 道具背包
+            own: { avatars: [], titles: [], skins: [] },  // 盲盒抽到的东西
+            daily: {},                               // 每日挑战记录
+            title: ''                                // 佩戴的称号
           };
           client.publish(tU(name), JSON.stringify(rec), { qos: 1, retain: true });
           saveName(name);
@@ -326,21 +332,144 @@ window.UserAPI = (function () {
       }, cb);
     },
 
-    /* 每日签到。回调 (err, rec, {already, streak, gained}) */
+    /* 每日签到。回调 (err, rec, {already, streak, gained, coins}) */
     doCheckin: function (cb) {
-      var L = window.Level;
+      var L = window.Level, E = window.Economy;
       if (!L) return cb && cb('等级模块没加载，刷新页面试试');
       patchSelf(function (rec) {
         var ci = rec.checkin || { last: '', streak: 0 };
         var s = L.nextStreak(ci);
-        if (!s) return { already: true, streak: ci.streak || 0, gained: 0 };
+        if (!s) return { already: true, streak: ci.streak || 0, gained: 0, coins: 0 };
         var gain = L.checkinGain(s);
+        var coins = E ? E.checkinCoins(s) : 5;
         ci.last = L.dayKey();
         ci.streak = s;
         rec.checkin = ci;
         rec.exp = Math.floor(Number(rec.exp) || 0) + gain;
+        rec.coins = Math.floor(Number(rec.coins) || 0) + coins;
         addToday(rec, gain);
-        return { already: false, streak: s, gained: gain, exp: rec.exp };
+        return { already: false, streak: s, gained: gain, coins: coins, exp: rec.exp, totalCoins: rec.coins };
+      }, cb);
+    },
+
+    /* ===== 金币 / 道具 / 盲盒 / 每日挑战 ===== */
+
+    /* 加减金币。回调 (err, rec, {before, after, gained}) */
+    addCoins: function (amount, reason, cb) {
+      amount = Math.floor(Number(amount) || 0);
+      if (!amount) return later(function () { cb && cb(null, null, { gained: 0 }); });
+      patchSelf(function (rec) {
+        var before = Math.floor(Number(rec.coins) || 0);
+        rec.coins = Math.max(0, before + amount);
+        return { before: before, after: rec.coins, gained: amount, reason: String(reason || '') };
+      }, cb);
+    },
+
+    /* 买道具 */
+    buyItem: function (key, cb) {
+      var E = window.Economy;
+      var it = E && E.ITEMS[key];
+      if (!it) return cb && cb('没有这个道具');
+      patchSelf(function (rec) {
+        var coins = Math.floor(Number(rec.coins) || 0);
+        if (coins < it.cost) return { fail: '金币不够（还差 ' + (it.cost - coins) + ' 个）' };
+        rec.coins = coins - it.cost;
+        rec.items = rec.items || {};
+        rec.items[key] = Math.floor(Number(rec.items[key]) || 0) + 1;
+        return { bought: key, cost: it.cost, count: rec.items[key], coins: rec.coins };
+      }, cb);
+    },
+
+    /* 用掉一个道具 */
+    useItem: function (key, cb) {
+      patchSelf(function (rec) {
+        rec.items = rec.items || {};
+        var n = Math.floor(Number(rec.items[key]) || 0);
+        if (n <= 0) return { fail: '这个道具用完了' };
+        rec.items[key] = n - 1;
+        return { used: key, left: rec.items[key] };
+      }, cb);
+    },
+
+    /* 抽盲盒 */
+    openBox: function (cb) {
+      var E = window.Economy;
+      if (!E) return cb && cb('金币模块没加载');
+      patchSelf(function (rec) {
+        var coins = Math.floor(Number(rec.coins) || 0);
+        if (coins < E.BOX_COST) return { fail: '金币不够（还差 ' + (E.BOX_COST - coins) + ' 个）' };
+        rec.coins = coins - E.BOX_COST;
+        var got = E.openBox();
+        rec.own = rec.own || { avatars: [], titles: [], skins: [] };
+        var list = got.kind === 'avatar' ? rec.own.avatars : rec.own.titles;
+        var dup = list.indexOf(got.value) >= 0;
+        var refund = 0;
+        if (dup) { refund = E.BOX_REFUND; rec.coins += refund; }
+        else list.push(got.value);
+        return {
+          kind: got.kind, value: got.value, rarity: got.rarity,
+          dup: dup, refund: refund, coins: rec.coins
+        };
+      }, cb);
+    },
+
+    /* 买宠物皮肤 */
+    buySkin: function (id, cb) {
+      var E = window.Economy;
+      var sk = E && E.skinOf(id);
+      if (!sk || !sk.id) return cb && cb('没有这个皮肤');
+      patchSelf(function (rec) {
+        rec.own = rec.own || { avatars: [], titles: [], skins: [] };
+        rec.own.skins = rec.own.skins || [];
+        if (rec.own.skins.indexOf(sk.id) >= 0) return { fail: '你已经有了' };
+        var coins = Math.floor(Number(rec.coins) || 0);
+        if (coins < sk.cost) return { fail: '金币不够（还差 ' + (sk.cost - coins) + ' 个）' };
+        rec.coins = coins - sk.cost;
+        rec.own.skins.push(sk.id);
+        return { skin: sk.id, coins: rec.coins };
+      }, cb);
+    },
+
+    /* 装备头像 / 称号 / 皮肤 */
+    equip: function (what, value, cb) {
+      patchSelf(function (rec) {
+        if (what === 'avatar') rec.avatar = String(value).slice(0, 4);
+        else if (what === 'title') rec.title = String(value).slice(0, 12);
+        else if (what === 'skin') rec.petSkin = String(value).slice(0, 8);
+        return { equipped: what, value: value };
+      }, cb);
+    },
+
+    /* 记录每日挑战结果 */
+    saveDaily: function (st, cb) {
+      patchSelf(function (rec) {
+        rec.daily = {
+          slot: st.slot, round: st.round || 1,
+          done: !!st.done, score: Math.floor(st.score || 0),
+          right: Math.floor(st.right || 0), coins: Math.floor(st.coins || 0),
+          at: Date.now()
+        };
+        if (st.coins > 0) rec.coins = Math.floor(Number(rec.coins) || 0) + Math.floor(st.coins);
+        return { daily: rec.daily, coins: rec.coins };
+      }, cb);
+    },
+
+    /* 花金币刷新每日挑战（换一批题 + 重置本轮的挑战机会） */
+    refreshDaily: function (cb) {
+      var E = window.Economy;
+      if (!E) return cb && cb('金币模块没加载');
+      patchSelf(function (rec) {
+        var coins = Math.floor(Number(rec.coins) || 0);
+        if (coins < E.DAILY_REFRESH_COINS) {
+          return { fail: '金币不够（还差 ' + (E.DAILY_REFRESH_COINS - coins) + ' 个）' };
+        }
+        rec.coins = coins - E.DAILY_REFRESH_COINS;
+        var old = rec.daily || {};
+        rec.daily = {
+          slot: E.dailySlot(), round: (Math.floor(old.round) || 1) + 1,
+          done: false, score: 0, right: 0, coins: 0, at: Date.now()
+        };
+        return { daily: rec.daily, coins: rec.coins };
       }, cb);
     },
 

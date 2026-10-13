@@ -29,6 +29,35 @@
     <h1 class="title">猜歌王</h1>
     <p class="subtitle">华语流行 · 听歌猜名</p>
 
+    <div class="pet-card" id="pet-card">
+      <div class="pet-row">
+        <div class="pet-emoji" id="pet-emoji">🥚</div>
+        <div class="pet-info">
+          <div class="pet-name"><span id="pet-name">一颗蛋</span><span class="lv-badge" id="home-lv">Lv1</span></div>
+          <div class="lv-bar"><div class="lv-fill" id="home-lv-fill"></div></div>
+          <div class="pet-note" id="pet-note">升到 3 级就裂壳</div>
+        </div>
+        <div class="coin-box" title="金币"><span class="coin-ico">🪙</span><b id="home-coins">0</b></div>
+      </div>
+      <div class="pet-btns">
+        <button class="btn btn-checkin" id="btn-home-checkin">📅 每日签到</button>
+        <button class="btn btn-ghost" id="btn-shop">🛍 商店</button>
+      </div>
+      <p class="pet-tip" id="home-checkin-tip"></p>
+    </div>
+
+    <div class="daily-card">
+      <div class="daily-top">
+        <div class="daily-t">
+          <b>🎯 每日挑战</b>
+          <div class="daily-sub">10 道题 · 混合所有曲库 · 答对拿金币</div>
+        </div>
+        <div class="daily-left" id="daily-left">--:--</div>
+      </div>
+      <button class="btn btn-daily" id="btn-daily">开始挑战</button>
+      <div class="daily-coins">听声猜歌 +3 · 听歌猜歌手 +5 · 看词猜歌 +10 <span class="coin-ico">🪙</span>　｜　3 小时刷新，或花 15 金币换一批</div>
+    </div>
+
     <div class="group">
       <div class="group-label">选曲库</div>
       <div class="tiles" id="pool-tiles">
@@ -113,6 +142,8 @@
       </div>
     </div>
 
+    <div class="item-bar" id="item-bar" hidden></div>
+
     <div class="options" id="options"></div>
 
     <div class="fill-area" id="fill-area" hidden>
@@ -177,6 +208,7 @@
     <div class="room-block">
       <div class="room-label">参与者 <span id="player-count">1 人</span></div>
       <div class="player-list" id="player-list"></div>
+      <div class="room-log" id="room-log"></div>
     </div>
 
     <div class="room-block">
@@ -407,6 +439,7 @@
 <script src="vendor/mqtt.min.js"></script>
 <script src="data/songs.js"></script>
 <script src="level.js"></script>
+<script src="economy.js"></script>
 <script src="room-api.js"></script>
 <script src="user-api.js"></script>
 <script src="app.js"></script>

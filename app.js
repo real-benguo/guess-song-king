@@ -43,7 +43,7 @@
     roomCode: $('room-code'), btnRoomLeave: $('btn-room-leave'),
     playerList: $('player-list'), playerCount: $('player-count'),
     roomSettings: $('room-settings'), hostTag: $('host-tag'),
-    btnRoomStart: $('btn-room-start'), roomHint: $('room-hint'),
+    btnRoomStart: $('btn-room-start'), roomHint: $('room-hint'), roomLog: $('room-log'),
     liveRank: $('live-rank'), board: $('board'),
     btnAccount: $('btn-account'),
     accName: $('acc-name'), accPwd: $('acc-pwd'),
@@ -85,7 +85,13 @@
     emojiRow: $('emoji-row'), btnEmoji: $('btn-emoji'),
     chatText: $('chat-text'), btnChatSend: $('btn-chat-send'),
     // 首页账号胶囊
-    acctChip: $('acct-chip'), acctAv: $('acct-av'), acctNick: $('acct-nick')
+    acctChip: $('acct-chip'), acctAv: $('acct-av'), acctNick: $('acct-nick'),
+    // 首页：宠物 / 金币 / 签到 / 每日挑战 / 商店
+    petEmoji: $('pet-emoji'), petName: $('pet-name'), petNote: $('pet-note'),
+    homeLv: $('home-lv'), homeLvFill: $('home-lv-fill'), homeCoins: $('home-coins'),
+    btnHomeCheckin: $('btn-home-checkin'), homeCheckinTip: $('home-checkin-tip'),
+    btnShop: $('btn-shop'), btnDaily: $('btn-daily'), dailyLeft: $('daily-left'),
+    itemBar: $('item-bar')
   };
 
   var audio = new Audio();
@@ -96,7 +102,29 @@
   var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌', singer: '听歌猜歌手' };
   var LYRIC_HIT = 5;      // 看词猜歌：直接答对
   var LYRIC_PLAYED = 1;   // 看词猜歌：听了音乐才答对
-  var ARTIST_MIN = 30;    // 曲目数达到这个量的歌手才进「歌手专项」
+  /* ---------------- 热门歌手（63 位） ----------------
+     两个用途：
+       1) 「歌手专项」里列出来的就是这 63 位
+       2) 难度「简单」只出这 63 位歌手的歌
+     列表按「普通人叫得出名字」来挑，覆盖国语 + 粤语。 */
+  var HOT_ARTISTS = [
+    // 国语 / 华语
+    '周杰伦', '林俊杰', '王力宏', '陈奕迅', '张学友', '邓紫棋', '薛之谦', '陶喆',
+    '五月天', '王菲', '张惠妹', '蔡依林', 'S.H.E', '田馥甄', '张韶涵', '梁静茹',
+    '刘若英', '周华健', '李宗盛', '罗大佑', '邓丽君', '那英', '汪峰', '许嵩',
+    '汪苏泷', '华晨宇', '周深', '毛不易', '李荣浩', '任贤齐', '张信哲', '伍佰',
+    '张宇', '林宥嘉', '杨丞琳', '萧敬腾', '苏打绿', '陈绮贞', '周传雄', '张震岳',
+    // 粤语 / 港乐
+    '刘德华', '黎明', '郭富城', '张国荣', '梅艳芳', '谭咏麟', 'Beyond', '李克勤',
+    '容祖儿', '杨千嬅', '郑秀文', '陈慧琳', 'Twins', '谢霆锋', '张敬轩', '谢安琪',
+    '卫兰', '陈慧娴', '叶倩文', '林忆莲', '古巨基', '周柏豪', '许志安'
+  ];
+  var HOT_SET = {};
+  HOT_ARTISTS.forEach(function (a) { HOT_SET[a] = 1; });
+
+  var DIFF_NAME = { easy: '简单', normal: '普通', hard: '困难' };
+
+  function popOf(s) { return s.pop || 3; }   // 3=热门 2=中等 1=冷门
 
   var state = null, rafId = null, locked = false, nextTimer = null;
 
@@ -175,15 +203,20 @@
     var q = null, guard = 0;
     while (guard++ < 5000) {
       if (!state.queue.length) { endGame('题库用完啦'); return; }
-      var s = state.queue.pop();
+      var item = state.queue.pop();
+      var s = item.s || item;
       if (state.used[s.t]) continue;
       state.used[s.t] = 1;
+      // 每日挑战：每题的玩法不一样
+      if (item.m) play = item.m;
+      else if (state.basePlay) play = state.basePlay;
       q = makeQuestion(s);
       if (q) break;
     }
     if (!q) { endGame('题库用完啦'); return; }
     state.current = q;
     renderQuestion();
+    renderItemBar();
   }
 
   function lyricHint(song) {
@@ -253,8 +286,28 @@
   }
 
   /* ---------------- 计时 ---------------- */
+  /* 答错后的「N 秒后下一题」倒计时 */
+  var cdTimer = null;
+  function stopCountdown() { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; } }
+  function countdownNext(sec, tipPrefix) {
+    stopCountdown();
+    var left = sec;
+    var step = function () {
+      if (left <= 0) {
+        stopCountdown();
+        if (isMulti && mState) renderMultiQuestion(); else nextQuestion();
+        return;
+      }
+      el.playerTip.textContent = tipPrefix + ' · ' + left + ' 秒后下一题';
+      left--;
+    };
+    step();
+    cdTimer = setInterval(step, 1000);
+  }
+
   function startTimer() {
     stopTimer();
+    stopCountdown();
     state.tStart = performance.now();
     if (play === 'lyric') {
       // 看词猜歌不限时
@@ -281,14 +334,37 @@
   /* ---------------- 判定 ---------------- */
   function judge(isRight, userText, isTimeout) {
     if (locked || !state || !state.current) return;
-    locked = true;
     stopTimer();
     stopAudio();
     el.disc.classList.add('is-done');
 
     var q = state.current;
+
+    /* 💖 「再来一次」：手里有这个道具，答错自动用掉，这道题不算输 */
+    if (!isRight && !isTimeout && !fill && !q.revived && itemCount('revive') > 0) {
+      q.revived = true;
+      UserAPI.useItem('revive', function (err, rec) {
+        if (err) { alert(err); return; }
+        if (rec) { myProfile = rec; renderItemBar(); }
+        sfxRight();
+        expToast('💖 用了「再来一次」，这道题不算错！');
+      });
+      locked = false;
+      var ob = el.options.querySelectorAll('.opt');
+      for (var bi = 0; bi < ob.length; bi++) {
+        if (ob[bi].textContent === userText) {
+          ob[bi].classList.add('is-dim', 'is-gone');
+          ob[bi].disabled = true;
+        }
+      }
+      el.playerTip.textContent = '💖 再来一次，还有机会！';
+      return;
+    }
+
+    locked = true;
     state.answered++;
 
+    var wrongTip = '';
     var gain = 0;
     if (isRight) {
       if (play === 'lyric') {
@@ -302,12 +378,19 @@
       state.right++;
       sfxRight();
       popScore('+' + fmt(gain));
-      el.playerTip.textContent = '✅ 答对！+' + fmt(gain) + ' 分';
+      if (state.daily) {
+        var cg = (window.Economy && window.Economy.DAILY_COINS[play]) || 0;
+        state.daily.coins += cg;
+        el.playerTip.textContent = '✅ 答对！+' + fmt(gain) + ' 分 · <b>+' + cg + ' 金币 🪙</b>';
+      } else {
+        el.playerTip.textContent = '✅ 答对！+' + fmt(gain) + ' 分';
+      }
       markDot(true);
     } else {
       sfxWrong();
       var ans = (play === 'singer') ? ('正确答案：' + q.correct.a) : ('正确答案：' + q.correct.a + '《' + q.correct.t + '》');
-      el.playerTip.textContent = (isTimeout ? '⏰ 超时了 · ' : '❌ 答错了 · ') + ans;
+      wrongTip = (isTimeout ? '⏰ 超时了 · ' : '❌ 答错了 · ') + ans + (state.daily ? ' · 本题 0 金币' : '');
+      el.playerTip.textContent = wrongTip;
       revealAnswer(userText);
       markDot(false);
     }
@@ -317,10 +400,12 @@
       // 多人：分数交给房主，题目节奏每个人自己走（不等别人）
       RoomAPI.submit(room.code, { score: gain, right: isRight ? 1 : 0 }, function () {});
       if (isHost()) setTimeout(hostCheckEnd, 300);
-      nextTimer = setTimeout(renderMultiQuestion, isRight ? 620 : 3000);
+      if (isRight) nextTimer = setTimeout(renderMultiQuestion, 620);
+      else countdownNext(3, wrongTip);
       return;
     }
-    nextTimer = setTimeout(nextQuestion, isRight ? 620 : 3000);
+    if (isRight) nextTimer = setTimeout(nextQuestion, 620);
+    else countdownNext(3, wrongTip);
   }
 
   function revealAnswer(userText) {
@@ -361,6 +446,7 @@
   /* ---------------- 渲染 ---------------- */
   function renderQuestion() {
     locked = false;
+    stopCountdown();
     var q = state.current;
     var isLyric = play === 'lyric';
 
@@ -397,6 +483,11 @@
         b.addEventListener('click', function () { judge(s === q.correct, b.textContent); });
         el.options.appendChild(b);
       });
+    }
+
+    if (state.daily && el.badge) {
+      el.badge.textContent = '🎯 每日挑战 · ' + (state.answered + 1) + '/' + state.total +
+        ' · ' + PLAY_NAME[play] + ' · 答对 +' + ((window.Economy && Economy.DAILY_COINS[play]) || 0) + ' 金币';
     }
 
     if (!endless) {
@@ -619,6 +710,19 @@
 
     saveScore();
 
+    // 每日挑战：把这一轮的结果和金币记到账号里
+    if (state.daily) {
+      UserAPI.saveDaily({
+        slot: state.daily.slot, round: state.daily.round, done: true,
+        score: state.score, right: state.right, coins: state.daily.coins || 0
+      }, function (e2, rec) {
+        if (e2) { alert(e2); return; }
+        if (rec) myProfile = rec;
+        renderHome(); refreshUserUI();
+        expToast('🎯 挑战完成 · <b>+' + (state.daily.coins || 0) + ' 金币</b>', true);
+      });
+    }
+
     if (state.take && takeCtx) {
       UserAPI.submitResult(takeCtx.code, {
         player: myUser || ('游客' + String(UserAPI.myPid()).slice(-4)),
@@ -693,7 +797,8 @@
       tStart: 0,
       current: null,
       over: false,
-      total: TOTAL
+      total: TOTAL,
+      basePlay: play
     };
     el.hudScore.textContent = '0';
     el.hudRight.textContent = '0';
@@ -718,13 +823,13 @@
     nextQuestion();
   }
 
-  /* 歌手专项：列出曲目够多的歌手 */
+  /* 歌手专项：63 位热门歌手，按拼音（首字母）排序 */
   function artistStats() {
-    var m = {};
-    DB.forEach(function (s) { m[s.a] = (m[s.a] || 0) + 1; });
-    return Object.keys(m).map(function (a) { return { name: a, n: m[a] }; })
-      .filter(function (x) { return x.n >= ARTIST_MIN; })
-      .sort(function (a, b) { return b.n - a.n; });
+    var have = {};
+    DB.forEach(function (s) { have[s.a] = (have[s.a] || 0) + 1; });
+    return HOT_ARTISTS.filter(function (a) { return have[a]; })
+      .sort(function (a, b) { return a.localeCompare(b, 'zh-Hans-CN'); })
+      .map(function (a) { return { name: a, n: have[a] }; });
   }
 
   function renderArtistChips() {
@@ -735,9 +840,7 @@
     list.forEach(function (x) {
       var b = document.createElement('button');
       b.className = 'artist-chip' + (x.name === artistSel ? ' on' : '');
-      b.innerHTML = '<span class="ac-t"></span><span class="ac-n"></span>';
-      b.querySelector('.ac-t').textContent = x.name;
-      b.querySelector('.ac-n').textContent = x.n;
+      b.textContent = x.name;
       b.addEventListener('click', function () {
         artistSel = x.name;
         sfxTap();
@@ -749,11 +852,13 @@
   }
 
   function refreshCounts() {
-    var map = { artist: poolOf('artist').length, zh: poolOf('zh').length, yue: poolOf('yue').length };
-    Object.keys(map).forEach(function (k) {
-      var node = document.querySelector('[data-count="' + k + '"]');
-      if (node) node.textContent = map[k] + ' 首';
-    });
+    var node;
+    node = document.querySelector('[data-count="zh"]');
+    if (node) node.textContent = poolOf('zh').length + ' 首';
+    node = document.querySelector('[data-count="yue"]');
+    if (node) node.textContent = poolOf('yue').length + ' 首';
+    node = document.querySelector('[data-count="artist"]');
+    if (node) node.textContent = artistStats().length + ' 位歌手';
     if (el.artistGroup) el.artistGroup.hidden = (pool !== 'artist');
   }
 
@@ -769,8 +874,6 @@
     for (var i = 0; i < DB.length; i++) if ((DB[i].a + '|' + DB[i].t) === key) return DB[i];
     return null;
   }
-  var DIFF_NAME = { easy: '简单', normal: '普通', hard: '困难' };
-
   /* 按房间设置挑题库：曲库 × 难度 × 玩法 */
   function poolBySettings(st) {
     var all = DB.slice();
@@ -778,12 +881,18 @@
     else if (st.pool === 'artist') all = all.filter(function (s) { return s.a === st.artist; });
     else all = all.filter(function (s) { return s.l !== 'yue'; });
 
-    // 难度越低，只留越热门的歌（pop 3=热门 / 2=中等 / 1=冷门）
-    var need = st.difficulty === 'easy' ? 3 : (st.difficulty === 'normal' ? 2 : 1);
-    if (need > 1) {
-      var f = all.filter(function (s) { return (s.pop || 3) >= need; });
-      if (f.length >= 20) all = f;
+    /* 难度：
+         简单 = 热门歌手 的 热门歌
+         普通 = 所有歌手 的 热门歌（包含简单那批）
+         困难 = 全部 */
+    var f = null;
+    if (st.difficulty === 'easy') {
+      f = all.filter(function (s) { return HOT_SET[s.a] && popOf(s) === 3; });
+    } else if (st.difficulty === 'normal') {
+      f = all.filter(function (s) { return popOf(s) === 3; });
     }
+    if (f && f.length >= 20) all = f;
+
     if (st.play === 'lyric') {
       var fl = all.filter(function (s) { return s.ly && s.ly.length > 40; });
       if (fl.length >= 10) all = fl;
@@ -836,6 +945,7 @@
 
   function enterRoom(r) {
     room = r; isMulti = true;
+    lastRoomSig = '';
     show('s-room');
     renderRoom();
     startRoomPoll();
@@ -848,14 +958,39 @@
     if (RoomAPI.ping) RoomAPI.ping();      // 每秒一次，顺便当心跳
     RoomAPI.get(room.code, function (err, r) {
       if (err || !r) {
-        stopRoomPoll(); alert('房间已关闭'); room = null; isMulti = false; show('s-lobby'); return;
+        stopRoomPoll();
+        roomGone('房间没了', '房间已经关闭或不存在了。');
+        return;
       }
+      // 房间作废（房主退出 / 掉线 / 没人了）
+      if (r.closed) {
+        stopRoomPoll();
+        var reason = r.closeReason || '房间已关闭';
+        var wasGame = isActive('s-game');
+        stopTimer(); stopAudio(); stopCountdown();
+        if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+        if (state) state.over = true;
+        room = null; isMulti = false; mState = null;
+        el.liveRank.hidden = true;
+        el.board.hidden = true;
+        roomGone('🚪 房间已失效', reason + (wasGame ? '\n这局不算，回主界面重新开吧。' : ''));
+        return;
+      }
+      var prevNames = (room.players || []).map(function (p) { return p.name; });
+      var prevClosed = room.closed;
       room = r;
+      // 有人走了 → 提示一下（房间页里也会留一行记录）
+      var nowNames = (room.players || []).map(function (p) { return p.name; });
+      if (isMulti && !isActive('s-lobby')) {
+        prevNames.forEach(function (n) {
+          if (n !== myRoomName() && nowNames.indexOf(n) < 0) expToast('👋 <b>' + esc(n) + '</b> 退出了房间');
+        });
+      }
       if (room.status === 'playing' && !isActive('s-game')) {
         try { startMultiGame(); } catch (e) { console.error('startMultiGame failed', e); }
       }
       if (room.status === 'over' && isActive('s-game')) endMultiGame();
-      if (isActive('s-room')) renderRoom();
+      if (isActive('s-room') && (roomSig(r) !== lastRoomSig)) { lastRoomSig = roomSig(r); renderRoom(); }
       if (isActive('s-game') && isMulti) {
         updateLiveRank();
         updateMultiBadge();
@@ -867,6 +1002,27 @@
         }
       }
     });
+  }
+
+  /* 房间没了/失效 → 统一提示（不弹「再来一局」那种结算页） */
+  function roomGone(title, msg) {
+    room = null; isMulti = false; mState = null;
+    el.liveRank.hidden = true;
+    el.board.hidden = true;
+    openModal(title,
+      '<p class="empty-tip" style="white-space:pre-line">' + esc(msg) + '</p>',
+      [
+        { label: '回主界面', cls: 'btn-primary', fn: function () { closeModal(); show('s-start'); } },
+        { label: '重新开一局', cls: 'btn-ghost', fn: function () { closeModal(); goLobby(); } }
+      ]);
+  }
+
+  /* 房间页只在「真的变了」的时候重画 —— 否则每秒重画会把歌手的滚动位置弹回去 */
+  var lastRoomSig = '';
+  function roomSig(r) {
+    return r.code + '|' + r.status + '|' + JSON.stringify(r.settings) + '|' +
+      (r.players || []).map(function (p) { return p.id + ':' + p.name; }).join(',') + '|' +
+      JSON.stringify((r.events || []).slice(-3));
   }
 
   function renderRoom() {
@@ -898,6 +1054,20 @@
     el.btnRoomStart.hidden = !host;
     el.hostTag.textContent = host ? '你是房主，可以修改' : '只有房主能改';
     el.roomHint.textContent = host ? '你是房主，设置好后点「开始游戏」' : '等房主开始…';
+
+    // 进出记录
+    if (el.roomLog) {
+      var evs = (room.events || []).slice(-4);
+      el.roomLog.innerHTML = '';
+      evs.forEach(function (e) {
+        var d = document.createElement('div');
+        d.className = 'rl-item ' + (e.t === 'leave' ? 'is-out' : 'is-in');
+        d.textContent = e.t === 'leave'
+          ? ('👋 ' + e.name + ' 退出了房间')
+          : ('✅ ' + e.name + ' 加入了房间');
+        el.roomLog.appendChild(d);
+      });
+    }
   }
 
   function renderRoomSettings(editable) {
@@ -961,9 +1131,7 @@
       artistStats().forEach(function (x) {
         var b = document.createElement('button');
         b.className = 'artist-chip' + (x.name === s.artist ? ' on' : '');
-        b.innerHTML = '<span class="ac-t"></span><span class="ac-n"></span>';
-        b.querySelector('.ac-t').textContent = x.name;
-        b.querySelector('.ac-n').textContent = x.n;
+        b.textContent = x.name;
         b.disabled = !editable;
         b.addEventListener('click', function () { patch('artist', x.name); });
         wrap.appendChild(b);
@@ -1179,13 +1347,19 @@
   }
 
   function leaveRoom() {
+    var wasHost = isHost();
     if (room) RoomAPI.leave(room.code, function () {});
     stopRoomPoll();
+    stopTimer(); stopAudio(); stopCountdown();
+    if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
     if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    if (state) state.over = true;
     room = null; isMulti = false; mState = null;
+    lastRoomSig = '';
     el.liveRank.hidden = true;
     el.board.hidden = true;
     show('s-start');
+    if (wasHost) expToast('房间已解散，其他人也会收到提示');
   }
 
   /* ================= 账号 ================= */
@@ -1193,6 +1367,7 @@
 
   function refreshUserUI() {
     if (el.quizUser) el.quizUser.textContent = myUser ? ('👤 ' + myUser) : '未登录';
+    if (typeof renderHome === 'function') renderHome();
     if (el.acctNick) {
       if (myUser) {
         el.acctNick.textContent = (myProfile && myProfile.nick) || myUser;
@@ -1249,6 +1424,8 @@
         if (err || !p) return;
         myProfile = p;
         renderLevelCard();
+        renderHome();
+        refreshUserUI();
         var h = document.getElementById('wc-hello');
         if (h) h.textContent = '欢迎回来，' + (p.nick || p.name);
         if (el.lobbyAs && UserAPI.savedName()) {
@@ -1311,6 +1488,365 @@
     };
     if (kind === 'login') UserAPI.login(n, p, done);
     else UserAPI.register(n, p, done);
+  }
+
+  /* ================= 金币 / 宠物 / 每日挑战 / 商店 ================= */
+
+  function E() { return window.Economy; }
+  function myCoins() { return Math.floor(Number((myProfile && myProfile.coins) || 0)); }
+  function itemCount(k) { return Math.floor(Number((myProfile && myProfile.items && myProfile.items[k]) || 0)); }
+
+  function mmss(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return (h > 0 ? h + ':' : '') + (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  /* 首页那张卡：宠物 + 等级条 + 金币 + 签到 */
+  function renderHome() {
+    var E2 = window.Economy, L = window.Level;
+    if (!E2 || !L) return;
+    var prof = myProfile || {};
+    var exp = Math.floor(Number(prof.exp) || 0);
+    var info = L.fromExp(exp);
+    var pet = E2.petOf(info.level);
+    var sk = E2.skinOf(prof.petSkin);
+
+    if (el.petEmoji) {
+      el.petEmoji.textContent = pet.emoji;
+      el.petEmoji.className = 'pet-emoji' + (sk.id ? ' skin-' + sk.id : '');
+    }
+    if (el.petName) el.petName.textContent = (info.title || '') + ' · ' + pet.name;
+    if (el.homeLv) el.homeLv.textContent = 'Lv' + info.level;
+    if (el.homeLvFill) el.homeLvFill.style.width = info.pct + '%';
+    if (el.petNote) {
+      el.petNote.textContent = UserAPI.savedName()
+        ? pet.note + ' · 经验 ' + info.cur + '/' + info.need
+        : '登录后开始孵化，等级越高它长得越大';
+    }
+    if (el.homeCoins) el.homeCoins.textContent = myCoins();
+
+    // 签到
+    var ci = prof.checkin || { last: '', streak: 0 };
+    var st = L.nextStreak(ci);
+    var signedToday = (ci.last === L.dayKey());
+    if (el.btnHomeCheckin) {
+      if (!UserAPI.savedName()) {
+        el.btnHomeCheckin.textContent = '📅 登录后可签到';
+        el.btnHomeCheckin.disabled = false;
+      } else if (signedToday) {
+        el.btnHomeCheckin.textContent = '✅ 今天已签到（连签 ' + (ci.streak || 0) + ' 天）';
+      } else {
+        el.btnHomeCheckin.textContent = '📅 每日签到 · +' + E2.checkinCoins(st) + ' 金币 +' + L.checkinGain(st) + ' 经验';
+      }
+    }
+    if (el.homeCheckinTip) {
+      el.homeCheckinTip.textContent = UserAPI.savedName()
+        ? '已连签 ' + (ci.streak || 0) + ' 天 · 每满一周，金币 +1（断一天就重新算）'
+        : '';
+    }
+
+    // 每日挑战
+    var slot = E2.dailySlot();
+    var d = prof.daily || {};
+    var done = (d.slot === slot && d.done);
+    if (el.btnDaily) {
+      el.btnDaily.textContent = !UserAPI.savedName() ? '登录后开始挑战'
+        : done ? ('已挑战 · 花 15 金币换一批（🪙 ' + myCoins() + '）')
+        : '开始挑战';
+    }
+    renderDailyLeft();
+  }
+
+  var dailyLeftTimer = null;
+  function renderDailyLeft() {
+    var E2 = window.Economy;
+    if (!E2 || !el.dailyLeft) return;
+    if (dailyLeftTimer) { clearInterval(dailyLeftTimer); dailyLeftTimer = null; }
+    var tick = function () {
+      el.dailyLeft.textContent = mmss(E2.dailyLeft());
+    };
+    tick();
+    dailyLeftTimer = setInterval(tick, 1000);
+  }
+
+  el.btnHomeCheckin.addEventListener('click', function () {
+    if (!UserAPI.savedName()) { goAccount(); return; }
+    UserAPI.doCheckin(function (err, rec, out) {
+      if (err) { alert(err); return; }
+      if (out && out.already) { expToast('今天已经签过啦'); return; }
+      if (rec) { myProfile = rec; }
+      renderHome(); refreshUserUI();
+      sfxRight();
+      expToast('📅 签到成功 · 连签 <b>' + (out.streak || 1) + '</b> 天 · <b>+' + (out.coins || 0) + ' 金币</b> +' + (out.gained || 0) + ' 经验', true);
+    });
+  });
+
+  /* ---------- 每日挑战 ---------- */
+  el.btnDaily.addEventListener('click', function () {
+    if (!UserAPI.savedName()) {
+      openModal('🎯 每日挑战', '<p class="empty-tip">先登录才能参加，金币和挑战记录都记在账号里。</p>',
+        [{ label: '去登录', cls: 'btn-primary', fn: function () { closeModal(); goAccount(); } },
+         { label: '先不', cls: 'btn-ghost', fn: closeModal }]);
+      return;
+    }
+    startDaily();
+  });
+
+  function startDaily() {
+    var E2 = window.Economy;
+    var d = (myProfile && myProfile.daily) || {};
+    var slot = E2.dailySlot();
+    var done = (d.slot === slot && d.done);
+    if (done) {
+      UserAPI.refreshDaily(function (err, rec) {
+        if (err) { alert(err); return; }
+        if (rec) myProfile = rec;
+        renderHome();
+        startDailyRun(slot, (rec && rec.daily && rec.daily.round) || 1);
+      });
+      return;
+    }
+    var round = (d.slot === slot && d.round) ? d.round : 1;
+    startDailyRun(slot, round);
+  }
+
+  function startDailyRun(slot, round) {
+    var E2 = window.Economy;
+    var seed = slot * 100 + round;
+    var plan = E2.dailyPlan(seed);
+    var rand = E2.rng(seed);
+    var items = [], usedT = {};
+    plan.forEach(function (kind) {
+      var p;
+      if (kind === 'lyric') p = DB.filter(function (s) { return s.ly && s.ly.length > 40 && popOf(s) === 3; });
+      else p = DB.filter(function (s) { return popOf(s) === 3; });
+      var s = null, guard = 0;
+      while (guard++ < 400) {
+        var c = p[Math.floor(rand() * p.length)];
+        if (c && !usedT[c.t]) { s = c; break; }
+      }
+      if (!s) s = p[Math.floor(rand() * p.length)] || p[0];
+      if (!s) return;
+      usedT[s.t] = 1;
+      items.push({ s: s, m: kind });
+    });
+    if (items.length < 4) { alert('挑战题库不够，稍后再试'); return; }
+
+    play = 'sound';
+    fill = false; endless = false;
+    isMulti = false; room = null; mState = null; stopRoomPoll();
+    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
+    el.liveRank.hidden = true;
+    el.board.hidden = true;
+    state = {
+      basePlay: 'sound', allPool: uniqByTitle(DB.slice()),
+      queue: items, used: {}, answered: 0, score: 0, right: 0,
+      usedSec: 0, tStart: 0, current: null, over: false,
+      total: items.length,
+      daily: { slot: slot, round: round, coins: 0 }
+    };
+    el.hudScore.textContent = '0';
+    el.hudRight.textContent = '0';
+    el.dots.innerHTML = '';
+    el.dots.hidden = false;
+    items.forEach(function () { var d2 = document.createElement('span'); d2.className = 'dot'; el.dots.appendChild(d2); });
+    el.badge.textContent = '🎯 每日挑战 · ' + items.length + ' 题';
+    show('s-game');
+    renderItemBar();
+    nextQuestion();
+  }
+
+  /* ---------- 商店 ---------- */
+  el.btnShop.addEventListener('click', function () {
+    if (!UserAPI.savedName()) {
+      openModal('🛍 商店', '<p class="empty-tip">先登录才能用金币买东西。</p>',
+        [{ label: '去登录', cls: 'btn-primary', fn: function () { closeModal(); goAccount(); } },
+         { label: '先不', cls: 'btn-ghost', fn: closeModal }]);
+      return;
+    }
+    openShop();
+  });
+
+  function openShop() {
+    var E2 = window.Economy;
+    var prof = myProfile || {};
+    var items = prof.items || {};
+    var own = prof.own || { avatars: [], titles: [], skins: [] };
+    var h = '';
+    h += '<div class="shop-coins">🪙 我的金币：<b>' + myCoins() + '</b></div>';
+
+    h += '<h4>道具（答题时用）</h4>';
+    E2.ITEM_KEYS.forEach(function (k) {
+      var it = E2.ITEMS[k];
+      h += '<div class="shop-row" data-k="' + k + '">' +
+        '<div class="sr-l"><b>' + it.emoji + ' ' + it.name + '</b><i>' + it.desc + '</i></div>' +
+        '<div class="sr-r"><span class="sr-count">已有 ' + (items[k] || 0) + '</span>' +
+        '<button class="btn btn-multi btn-sm" data-buy="' + k + '">🪙 ' + it.cost + '</button></div></div>';
+    });
+
+    h += '<h4>盲盒（随机头像 / 称号）</h4>';
+    h += '<div class="shop-row"><div class="sr-l"><b>🎁 抽一次盲盒</b><i>普通 70% · 稀有 25% · 传说 5%；抽到重复的退 8 金币</i></div>' +
+      '<div class="sr-r"><button class="btn btn-primary btn-sm" data-box="1">🪙 ' + E2.BOX_COST + '</button></div></div>';
+    h += '<div class="shop-own">已有称号：' + ((own.titles && own.titles.length) ? own.titles.map(function (t) {
+      var on = (prof.title === t) ? ' ✓' : '';
+      return '<button class="tag-btn" data-title="' + esc(t) + '">' + esc(t) + on + '</button>';
+    }).join(' ') : '<span class="muted">还没有</span>') + '</div>';
+
+    h += '<h4>宠物</h4>';
+    h += '<div class="shop-row"><div class="sr-l"><b>⚡ 加速孵化</b><i>直接买 200 经验，早点孵出小鸡</i></div>' +
+      '<div class="sr-r"><button class="btn btn-multi btn-sm" data-boost="1">🪙 ' + E2.BOOST.cost + '</button></div></div>';
+    E2.PET_SKINS.forEach(function (sk) {
+      if (!sk.id) return;
+      var has = (own.skins || []).indexOf(sk.id) >= 0;
+      var on = prof.petSkin === sk.id;
+      h += '<div class="shop-row"><div class="sr-l"><b>' + E2.petOf(15).emoji + ' ' + sk.name + '</b><i>' +
+        (on ? '佩戴中' : has ? '已拥有，点一下换上' : '换上后首页的蛋就是这个色') + '</i></div>' +
+        '<div class="sr-r">' + (has
+          ? '<button class="btn btn-ghost btn-sm" data-skin="' + sk.id + '">' + (on ? '佩戴中' : '换上') + '</button>'
+          : '<button class="btn btn-multi btn-sm" data-skin="' + sk.id + '">🪙 ' + sk.cost + '</button>') +
+        '</div></div>';
+    });
+
+    h += '<p class="hint">金币来源：每日签到 5 个（连签满一周 +1）、每日挑战答对（3 / 5 / 10）。</p>';
+
+    openModal('🛍 商店', h, [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+
+    var body = document.getElementById('modal-body');
+    body.querySelectorAll('[data-buy]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        UserAPI.buyItem(b.getAttribute('data-buy'), function (err, rec, out) {
+          if (err) { alert(err); return; }
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI(); openShop();
+        });
+      });
+    });
+    body.querySelectorAll('[data-box]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        UserAPI.openBox(function (err, rec, out) {
+          if (err) { alert(err); return; }
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI();
+          var tag = E2.RARITY_NAME[out.rarity] || '';
+          sfxRight();
+          openModal('🎁 ' + tag + '！',
+            '<div class="box-win r' + out.rarity + '">' + (out.kind === 'avatar' ? out.value : '🏷') + '</div>' +
+            '<p class="empty-tip">' + (out.kind === 'avatar' ? '新头像「' : '新称号「') + out.value + '」' +
+            (out.dup ? '（重复了，退 ' + out.refund + ' 金币）' : '') + '</p>' +
+            (out.kind === 'title' ? '<p class="hint">去个人主页或商店里点它即可佩戴。</p>' : ''),
+            [{ label: '再抽一次', cls: 'btn-multi', fn: openShop },
+             { label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+        });
+      });
+    });
+    body.querySelectorAll('[data-boost]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        UserAPI.addCoins(-E2.BOOST.cost, '加速孵化', function (e1, rec) {
+          if (e1) { alert(e1); return; }
+          UserAPI.addExp(E2.BOOST.exp, '加速孵化', function (e2, rec2) {
+            if (e2) { alert(e2); return; }
+            if (rec2) myProfile = rec2;
+            renderHome(); refreshUserUI(); sfxRight();
+            openModal('⚡ 孵化加速', '<div class="welcome-hello">+' + E2.BOOST.exp + ' 经验！</div>' +
+              '<p class="empty-tip">' + E2.petOf(Level.fromExp(myProfile.exp || 0).level).note + '</p>',
+              [{ label: '关闭', cls: 'btn-primary', fn: closeModal }]);
+          });
+        });
+      });
+    });
+    body.querySelectorAll('[data-skin]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var id = b.getAttribute('data-skin');
+        var sk = E2.skinOf(id);
+        var has = ((myProfile.own && myProfile.own.skins) || []).indexOf(id) >= 0;
+        var after = function (rec) {
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI(); openShop();
+        };
+        if (has) UserAPI.equip('skin', id, function (e2, rec) { if (e2) { alert(e2); return; } after(rec); });
+        else UserAPI.buySkin(id, function (e2, rec) {
+          if (e2) { alert(e2); return; }
+          if (rec) myProfile = rec;
+          UserAPI.equip('skin', id, function (e3, rec2) { after(rec2 || rec); });
+        });
+      });
+    });
+    body.querySelectorAll('[data-title]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        UserAPI.equip('title', b.getAttribute('data-title'), function (e2, rec) {
+          if (e2) { alert(e2); return; }
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI(); openShop();
+        });
+      });
+    });
+  }
+
+  /* ---------- 答题里的道具 ---------- */
+  function renderItemBar() {
+    var bar = el.itemBar;
+    if (!bar) return;
+    if (!state || state.over || isMulti || fill) { bar.hidden = true; return; }
+    var E2 = window.Economy;
+    if (!E2 || !UserAPI.savedName()) { bar.hidden = true; return; }
+    bar.innerHTML = '';
+    var any = false;
+    E2.ITEM_KEYS.forEach(function (k) {
+      var n = itemCount(k);
+      if (n <= 0) return;
+      any = true;
+      var it = E2.ITEMS[k];
+      var b = document.createElement('button');
+      b.className = 'item-btn';
+      b.innerHTML = '<span class="ib-emoji"></span><span class="ib-name"></span><span class="ib-count"></span>';
+      b.querySelector('.ib-emoji').textContent = it.emoji;
+      b.querySelector('.ib-name').textContent = it.name;
+      b.querySelector('.ib-count').textContent = '×' + n;
+      b.addEventListener('click', function () { useItem(k, b); });
+      bar.appendChild(b);
+    });
+    bar.hidden = !any;
+  }
+
+  function useItem(k, btn) {
+    if (!state || state.over || locked) { if (k === 'revive') return; }
+    var E2 = window.Economy;
+    if (!E2) return;
+    if (k === 'hint2') {
+      if (locked || !state || !state.current) { expToast('这道题已经答过了'); return; }
+      var btns = el.options.querySelectorAll('.opt');
+      if (!btns.length) { expToast('这道题用不了'); return; }
+      var wrongs = [];
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].disabled) continue;
+        if (btns[i].textContent !== state.current.correct.t) wrongs.push(btns[i]);
+      }
+      if (wrongs.length < 2) { expToast('错项不够两个了'); return; }
+      UserAPI.useItem('hint2', function (err, rec) {
+        if (err) { alert(err); return; }
+        if (rec) { myProfile = rec; renderItemBar(); }
+        var q = state.current;
+        q.opts.forEach(function (o) { if (o.t !== q.correct.t) q.removed = (q.removed || 0); });
+        wrongs.slice(0, 2).forEach(function (b) { b.classList.add('is-dim'); b.disabled = true; b.classList.add('is-gone'); });
+        sfxTap();
+      });
+      return;
+    }
+    if (k === 'peek') {
+      if (locked || !state || !state.current) { expToast('这道题已经答过了'); return; }
+      var q2 = state.current.correct;
+      var first = (play === 'singer') ? q2.a : q2.t;
+      UserAPI.useItem('peek', function (err, rec) {
+        if (err) { alert(err); return; }
+        if (rec) { myProfile = rec; renderItemBar(); }
+        sfxTap();
+        el.playerTip.textContent = '🔍 提示：答案的第一个字是「' + first.charAt(0) + '」';
+      });
+      return;
+    }
+    // revive 只在答错后的间隙可用
+    expToast('答错的时候会自动用「再来一次」');
   }
 
   /* ================= 出题 / 答题 ================= */
@@ -1417,7 +1953,7 @@
       used: {},
       answered: 0, score: 0, right: 0,
       usedSec: 0, tStart: 0, current: null, over: false,
-      total: pool.length, take: true
+      total: pool.length, take: true, basePlay: play
     };
     el.hudScore.textContent = '0';
     el.hudRight.textContent = '0';
@@ -1574,6 +2110,7 @@
       var lvBefore = (out && typeof out.before === 'number') ? lvInfo({ exp: out.before }).level : null;
       var lvAfter = lvInfo(rec).level;
       renderLevelCard();
+      renderHome();
       if (lvBefore !== null && lvAfter > lvBefore) {
         confetti();
         expToast('🎉 升级！<b>Lv' + lvAfter + '</b> ' + lvInfo(rec).title, true);
@@ -2060,10 +2597,15 @@
   });
 
   el.btnRoomLeave.addEventListener('click', function () {
-    openModal('离开房间？', '<p class="empty-tip">离开后要重新输入房间码才能回来。</p>', [
-      { label: '再玩会儿', cls: 'btn-ghost', fn: closeModal },
-      { label: '离开', cls: 'btn-primary', fn: function () { closeModal(); leaveRoom(); } }
-    ]);
+    var host = isHost();
+    openModal(host ? '解散房间？' : '离开房间？',
+      '<p class="empty-tip">' + (host
+        ? '你是房主，你离开后<b>整个房间会解散</b>，其他人会收到「房间已失效」的提示。'
+        : '离开后要重新输入房间码才能回来。') + '</p>',
+      [
+        { label: '再玩会儿', cls: 'btn-ghost', fn: closeModal },
+        { label: host ? '解散并离开' : '离开', cls: 'btn-primary', fn: function () { closeModal(); leaveRoom(); } }
+      ]);
   });
 
   /* ---- 账号事件 ---- */

@@ -19,6 +19,7 @@ window.RoomAPI = (function () {
     rounds: 10, play: 'sound', mode: 'speed', minutes: 3,
     pool: 'zh', artist: '周杰伦', difficulty: 'normal'
   };
+  var MAX_EVENTS = 6;
 
   var client = null;
   var myRoom = null;
@@ -90,6 +91,13 @@ window.RoomAPI = (function () {
   }
 
   /* ---------------- 房主侧：处理上行 ---------------- */
+  function pushEvent(t, name) {
+    if (!myRoom) return;
+    myRoom.events = myRoom.events || [];
+    myRoom.events.push({ t: t, name: name, at: Date.now() });
+    if (myRoom.events.length > MAX_EVENTS) myRoom.events = myRoom.events.slice(-MAX_EVENTS);
+  }
+
   function handleUp(msg) {
     if (!myRoom || !isHostClient) return;
     var p, changed = false;
@@ -114,6 +122,7 @@ window.RoomAPI = (function () {
         myRoom.players.push({
           id: msg.pid, name: msg.name, score: 0, right: 0, answered: 0, lastSeen: Date.now()
         });
+        pushEvent('join', msg.name);
         changed = true;
       }
     } else if (msg.t === 'rename') {
@@ -141,12 +150,19 @@ window.RoomAPI = (function () {
       return;
     } else if (msg.t === 'leave') {
       var before = myRoom.players.length;
+      var who = null;
+      for (var i = 0; i < myRoom.players.length; i++) if (myRoom.players[i].id === msg.pid) who = myRoom.players[i];
       myRoom.players = myRoom.players.filter(function (x) { return x.id !== msg.pid; });
       if (myRoom.players.length !== before) {
         changed = true;
-        if (myRoom.hostId === msg.pid && myRoom.players.length) {
-          myRoom.hostId = myRoom.players[0].id;   // 房主走了，顺位交接
+        if (who) pushEvent('leave', who.name);
+        if (myRoom.hostId === msg.pid) {
+          // 房主走了 = 整个房间作废，别让其他人干等
+          closeRoom('房主退出了，房间已失效');
+          return;
         }
+        if (!myRoom.players.length) { closeRoom('房间没人了'); return; }
+        if (!findPlayer(myRoom.hostId)) myRoom.hostId = myRoom.players[0].id;
       }
     }
 
@@ -179,12 +195,18 @@ window.RoomAPI = (function () {
     sweepTimer = setInterval(function () {
       if (!myRoom || !isHostClient) return;
       var t = Date.now(), changed = false;
+      var gone = [];
       myRoom.players = myRoom.players.filter(function (p) {
-        if (t - (p.lastSeen || 0) > STALE_MS) { changed = true; return false; }
+        if (t - (p.lastSeen || 0) > STALE_MS) { changed = true; gone.push(p); return false; }
         return true;
       });
-      if (!myRoom.players.length) { closeRoom(); return; }
+      if (!myRoom.players.length) { closeRoom('房间没人了'); return; }
       if (changed) {
+        gone.forEach(function (p) { pushEvent('leave', p.name); });
+        if (gone.some(function (p) { return p.id === myRoom.hostId; })) {
+          closeRoom('房主掉线了，房间已失效');
+          return;
+        }
         if (!findPlayer(myRoom.hostId)) myRoom.hostId = myRoom.players[0].id;
         publishState();
       }
@@ -192,9 +214,10 @@ window.RoomAPI = (function () {
   }
   function stopSweep() { if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; } }
 
-  function closeRoom() {
+  function closeRoom(reason) {
     if (!myRoom) return;
     myRoom.closed = true;
+    myRoom.closeReason = reason || '房间已关闭';
     publishState();
     stopSweep();
   }
@@ -219,6 +242,7 @@ window.RoomAPI = (function () {
           settings: clone(DEFAULT_SETTINGS),
           status: 'waiting',
           players: [{ id: myId(), name: name, score: 0, right: 0, answered: 0, lastSeen: Date.now() }],
+          events: [],
           qIndex: 0,
           songId: null,
           startedAt: null,
@@ -263,16 +287,15 @@ window.RoomAPI = (function () {
       });
     },
 
-    /* 轮询读当前状态（实际是读 MQTT 推过来的缓存） */
+    /* 轮询读当前状态（实际是读 MQTT 推过来的缓存）。
+       房间关闭不再当错误返回，交给上层决定怎么提示。 */
     get: function (code, cb) {
       code = (code || '').toUpperCase();
       if (isHostClient && myRoom && myRoom.code === code) {
-        return later(function () { cb(myRoom.closed ? '房间已关闭' : null, clone(myRoom)); });
+        return later(function () { cb(null, clone(myRoom)); });
       }
       var st = cache[code];
-      if (st && st.closed) return later(function () { cb('房间已关闭', st); });
-      if (st) return later(function () { cb(null, clone(st)); });
-      later(function () { cb(null, null); });
+      later(function () { cb(null, st ? clone(st) : null); });
     },
 
     rename: function (code, name, cb) {
@@ -344,7 +367,8 @@ window.RoomAPI = (function () {
 
     leave: function (code, cb) {
       try {
-        if (isHostClient) { closeRoom(); }
+        // 房主走了 = 整个房间作废；其他人走只是退出
+        if (isHostClient) { closeRoom('房主退出了，房间已失效'); }
         else { publishUp({ t: 'leave', pid: myId() }); }
       } catch (e) {}
       stopSweep();
