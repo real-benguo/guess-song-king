@@ -91,7 +91,12 @@
     homeLv: $('home-lv'), homeLvFill: $('home-lv-fill'), homeCoins: $('home-coins'),
     btnHomeCheckin: $('btn-home-checkin'), homeCheckinTip: $('home-checkin-tip'),
     btnShop: $('btn-shop'), btnDaily: $('btn-daily'), dailyLeft: $('daily-left'),
-    itemBar: $('item-bar')
+    itemBar: $('item-bar'),
+    // 新排版：金币胶囊 / 更多选项 / 商店页
+    coinChip: $('coin-chip'), btnMore: $('btn-more'), moreOpts: $('more-opts'),
+    artistHint: $('artist-hint'),
+    btnShopBack: $('btn-shop-back'), shopCoins: $('shop-coins'),
+    shopTabs: $('shop-tabs'), shopBody: $('shop-body')
   };
 
   var audio = new Audio();
@@ -155,7 +160,7 @@
   }
   function gamePool() {
     var p = poolOf(pool);
-    if (play === 'lyric') p = p.filter(function (s) { return s.ly && s.ly.length > 40; });
+    if (play === 'lyric') p = p.filter(lyricOK);
     if (play === 'singer') {
       // 听歌猜歌手：库里至少要有 4 位不同歌手，不然出不了题
       var arts = {};
@@ -219,11 +224,19 @@
     renderItemBar();
   }
 
-  function lyricHint(song) {
-    var lines = (song.ly || '').split('\n')
+  /* 歌词是否够看：必须能凑出两行有内容的，否则「看词猜歌」会出现空白 */
+  function lyricLines(s) {
+    return String((s && s.ly) || '').split('\n')
       .map(function (x) { return x.trim(); })
-      .filter(function (x) { return x.length >= 5 && x.indexOf('[') !== 0 && x.indexOf('（') !== 0; });
-    if (lines.length < 2) return song.ly || '';
+      .filter(function (x) {
+        return x.length >= 5 && x.indexOf('[') !== 0 && x.indexOf('（') !== 0;
+      });
+  }
+  function lyricOK(s) { return lyricLines(s).length >= 2; }
+
+  function lyricHint(song) {
+    var lines = lyricLines(song);
+    if (lines.length < 2) return '';
     var start = Math.floor(Math.random() * Math.max(1, lines.length - 2));
     return lines.slice(start, start + 2).join('\n');
   }
@@ -373,7 +386,7 @@
       } else {
         gain = scoreFor(state.usedSec);
       }
-      if (fill && !isMulti) gain *= 2;
+      if (fill) gain *= 2;   // 填空：单人和多人都是双倍
       state.score += gain;
       state.right++;
       sfxRight();
@@ -462,7 +475,8 @@
     el.lyricBox.hidden = !isLyric;
     el.playerTip.textContent = isLyric ? '根据歌词猜歌名（不限时）'
       : (play === 'singer' ? '点击播放片段，猜是哪位歌手' : '点击播放片段');
-    el.lyricText.textContent = isLyric ? lyricHint(q.correct) : '';
+    var lyrHint = isLyric ? lyricHint(q.correct) : '';
+    el.lyricText.textContent = lyrHint;
 
     // 选项 / 填空
     el.options.hidden = fill;
@@ -497,6 +511,16 @@
 
     updateHud();
     startTimer();
+
+    // 兜底：万一挑到没有可用歌词的歌，别让玩家对着空白发呆
+    if (isLyric && !lyrHint) {
+      locked = true;
+      el.lyricText.textContent = '（这首歌没有可用的歌词，马上换下一题）';
+      if (nextTimer) clearTimeout(nextTimer);
+      nextTimer = setTimeout(function () {
+        if (isMulti && mState) renderMultiQuestion(); else nextQuestion();
+      }, 900);
+    }
   }
 
   /* ---------------- 音效 ---------------- */
@@ -894,7 +918,7 @@
     if (f && f.length >= 20) all = f;
 
     if (st.play === 'lyric') {
-      var fl = all.filter(function (s) { return s.ly && s.ly.length > 40; });
+      var fl = all.filter(lyricOK);
       if (fl.length >= 10) all = fl;
     }
     if (st.play === 'singer') {
@@ -1077,6 +1101,7 @@
       { k: 'rounds', name: '题目数量', opts: [[5, '5 题'], [10, '10 题'], [15, '15 题'], [20, '20 题']], show: s.mode === 'speed' },
       { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
       { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词'], ['singer', '猜歌手']] },
+      { k: 'fill', name: '作答方式', opts: [[0, '选选项'], [1, '填空 ×2']] },
       { k: 'pool', name: '曲库', opts: [['zh', '国语'], ['yue', '粤语'], ['artist', '歌手专项']] },
       { k: 'difficulty', name: '难度', opts: [['easy', '简单'], ['normal', '普通'], ['hard', '困难']] }
     ];
@@ -1172,6 +1197,8 @@
   function startMultiGame() {
     var s = room.settings;
     play = s.play;   // 多人时题目类型跟随房间设置，而不是首页的选择
+    fill = !!s.fill;   // 多人也能玩填空（得分 ×2）
+    endless = false;
     var list = uniqByTitle(shuffle(poolBySettings(s)));
     if (list.length < 4) {
       alert('这个设置的题库不够（' + POOL_NAME[s.pool] + ' · ' + DIFF_NAME[s.difficulty] +
@@ -1214,7 +1241,8 @@
     var s = room.settings;
     var diff = (s.difficulty && s.difficulty !== 'normal') ? (' · ' + DIFF_NAME[s.difficulty]) : '';
     var poolName = (s.pool === 'artist') ? (s.artist + '专项') : POOL_NAME[s.pool];
-    el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' + poolName + diff + ' · ' +
+    el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' + poolName + diff +
+      (s.fill ? ' · 填空' : '') + ' · ' +
       (s.mode === 'speed' ? (s.rounds + ' 题') : (s.minutes + ' 分钟')) + multiLeft();
   }
 
@@ -1496,6 +1524,21 @@
   function myCoins() { return Math.floor(Number((myProfile && myProfile.coins) || 0)); }
   function itemCount(k) { return Math.floor(Number((myProfile && myProfile.items && myProfile.items[k]) || 0)); }
 
+  /* 加速孵化：每天只能买一次（否则等级可以无限刷） */
+  function canBoost() {
+    var L = window.Level;
+    if (!L || !UserAPI.savedName()) return false;
+    var prof = myProfile || {};
+    return (prof.boostDay || '') !== L.dayKey();
+  }
+  function boostTip() {
+    var L = window.Level;
+    if (!L) return '';
+    if (!UserAPI.savedName()) return '登录后才能加速孵化';
+    if (canBoost()) return '今天还能加速一次（每天限 1 次）';
+    return '今天的加速已经用过了，明天再来（每天限 1 次）';
+  }
+
   function mmss(ms) {
     var s = Math.max(0, Math.floor(ms / 1000));
     var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
@@ -1535,15 +1578,15 @@
         el.btnHomeCheckin.textContent = '📅 登录后可签到';
         el.btnHomeCheckin.disabled = false;
       } else if (signedToday) {
-        el.btnHomeCheckin.textContent = '✅ 今天已签到（连签 ' + (ci.streak || 0) + ' 天）';
+        el.btnHomeCheckin.textContent = '✅ 今天已签到';
       } else {
-        el.btnHomeCheckin.textContent = '📅 每日签到 · +' + E2.checkinCoins(st) + ' 金币 +' + L.checkinGain(st) + ' 经验';
+        el.btnHomeCheckin.textContent = '📅 每日签到';
       }
     }
     if (el.homeCheckinTip) {
-      el.homeCheckinTip.textContent = UserAPI.savedName()
-        ? '已连签 ' + (ci.streak || 0) + ' 天 · 每满一周，金币 +1（断一天就重新算）'
-        : '';
+      if (!UserAPI.savedName()) el.homeCheckinTip.textContent = '';
+      else if (signedToday) el.homeCheckinTip.textContent = '已连签 ' + (ci.streak || 0) + ' 天 · 明天再来（断一天就重新算）';
+      else el.homeCheckinTip.textContent = '签到得 ' + E2.checkinCoins(st) + ' 金币 + ' + L.checkinGain(st) + ' 经验 · 已连签 ' + (ci.streak || 0) + ' 天（每满一周金币 +1）';
     }
 
     // 每日挑战
@@ -1619,7 +1662,7 @@
     var items = [], usedT = {};
     plan.forEach(function (kind) {
       var p;
-      if (kind === 'lyric') p = DB.filter(function (s) { return s.ly && s.ly.length > 40 && popOf(s) === 3; });
+      if (kind === 'lyric') p = DB.filter(function (s) { return lyricOK(s) && popOf(s) === 3; });
       else p = DB.filter(function (s) { return popOf(s) === 3; });
       var s = null, guard = 0;
       while (guard++ < 400) {
@@ -1658,111 +1701,155 @@
   }
 
   /* ---------- 商店 ---------- */
-  el.btnShop.addEventListener('click', function () {
+  el.btnShop.addEventListener('click', goShop);
+  if (el.btnShopBack) el.btnShopBack.addEventListener('click', function () { show('s-start'); });
+  if (el.coinChip) el.coinChip.addEventListener('click', goShop);
+  if (el.btnMore) el.btnMore.addEventListener('click', function () {
+    var open = el.moreOpts.hidden;
+    el.moreOpts.hidden = !open;
+    el.btnMore.textContent = open ? '更多选项 ▴' : '更多选项 ▾';
+  });
+
+  function goShop() {
     if (!UserAPI.savedName()) {
       openModal('🛍 商店', '<p class="empty-tip">先登录才能用金币买东西。</p>',
         [{ label: '去登录', cls: 'btn-primary', fn: function () { closeModal(); goAccount(); } },
          { label: '先不', cls: 'btn-ghost', fn: closeModal }]);
       return;
     }
-    openShop();
-  });
+    show('s-shop');
+    renderShop();
+  }
 
-  function openShop() {
+  var shopTab = 'item';
+  if (el.shopTabs) {
+    el.shopTabs.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      shopTab = b.getAttribute('data-t');
+      Array.prototype.forEach.call(el.shopTabs.querySelectorAll('button'), function (x) {
+        x.classList.toggle('on', x === b);
+      });
+      sfxTap();
+      renderShop();
+    });
+  }
+
+  function shopRow(left, right) {
+    return '<div class="shop-row"><div class="sr-l">' + left + '</div><div class="sr-r">' + right + '</div></div>';
+  }
+
+  function renderShop() {
     var E2 = window.Economy;
+    if (!E2 || !el.shopBody) return;
     var prof = myProfile || {};
     var items = prof.items || {};
     var own = prof.own || { avatars: [], titles: [], skins: [] };
+    if (el.shopCoins) el.shopCoins.textContent = myCoins();
+
     var h = '';
-    h += '<div class="shop-coins">🪙 我的金币：<b>' + myCoins() + '</b></div>';
+    if (shopTab === 'item') {
+      h += '<p class="shop-note">答题时出现在题目上方，点一下就用。</p>';
+      E2.ITEM_KEYS.forEach(function (k) {
+        var it = E2.ITEMS[k];
+        var n = items[k] || 0;
+        h += shopRow(
+          '<b>' + it.emoji + ' ' + it.name + '</b><i>' + it.desc + '</i>',
+          '<span class="sr-count">' + (n ? '已有 ' + n : '') + '</span>' +
+          '<button class="btn btn-multi btn-sm" data-buy="' + k + '">🪙 ' + it.cost + '</button>');
+      });
+    } else if (shopTab === 'box') {
+      h += '<div class="box-card">' +
+        '<div class="box-ico">🎁</div>' +
+        '<div class="box-t">抽一次盲盒</div>' +
+        '<div class="box-s">普通 70% · 稀有 25% · 传说 5%<br>抽到重复的退 ' + E2.BOX_REFUND + ' 金币</div>' +
+        '<button class="btn btn-primary" data-box="1">🪙 ' + E2.BOX_COST + ' 抽一次</button>' +
+        '</div>';
+      h += '<div class="shop-sec">我的称号</div>';
+      var ts = (own.titles || []);
+      h += '<div class="tag-wrap">' + (ts.length ? ts.map(function (t) {
+        return '<button class="tag-btn' + (prof.title === t ? ' on' : '') + '" data-title="' + esc(t) + '">' +
+          esc(t) + (prof.title === t ? ' ✓' : '') + '</button>';
+      }).join('') : '<span class="muted">还没有，去抽一个</span>') + '</div>';
+      h += '<div class="shop-sec">我的头像</div>';
+      var as = (own.avatars || []);
+      h += '<div class="tag-wrap">' + (as.length ? as.map(function (a) {
+        return '<button class="tag-btn av' + (prof.avatar === a ? ' on' : '') + '" data-avatar="' + esc(a) + '">' + esc(a) + '</button>';
+      }).join('') : '<span class="muted">还没有，去抽一个</span>') + '</div>';
+    } else {
+      var pet = E2.petOf(Level.fromExp(Math.floor(Number(prof.exp) || 0)).level);
+      h += '<div class="box-card">' +
+        '<div class="box-ico">' + pet.emoji + '</div>' +
+        '<div class="box-t">' + pet.name + '</div>' +
+        '<div class="box-s">' + pet.note + '</div>' +
+        '<button class="btn btn-multi" data-boost="1"' + (canBoost() ? '' : ' disabled') + '>' +
+        '⚡ 加速孵化 · 🪙 ' + E2.BOOST.cost + '（+' + E2.BOOST.exp + ' 经验）</button>' +
+        '<div class="box-s" style="margin-top:8px">' + boostTip() + '</div>' +
+        '</div>';
+      h += '<div class="shop-sec">宠物皮肤</div>';
+      E2.PET_SKINS.forEach(function (sk) {
+        if (!sk.id) return;
+        var has = (own.skins || []).indexOf(sk.id) >= 0;
+        var on = prof.petSkin === sk.id;
+        h += shopRow(
+          '<b>' + E2.petOf(15).emoji + ' ' + sk.name + '</b><i>' + (on ? '佩戴中' : has ? '已拥有' : '给蛋换个颜色') + '</i>',
+          has ? '<button class="btn btn-ghost btn-sm" data-skin="' + sk.id + '">' + (on ? '佩戴中' : '换上') + '</button>'
+              : '<button class="btn btn-multi btn-sm" data-skin="' + sk.id + '">🪙 ' + sk.cost + '</button>');
+      });
+    }
 
-    h += '<h4>道具（答题时用）</h4>';
-    E2.ITEM_KEYS.forEach(function (k) {
-      var it = E2.ITEMS[k];
-      h += '<div class="shop-row" data-k="' + k + '">' +
-        '<div class="sr-l"><b>' + it.emoji + ' ' + it.name + '</b><i>' + it.desc + '</i></div>' +
-        '<div class="sr-r"><span class="sr-count">已有 ' + (items[k] || 0) + '</span>' +
-        '<button class="btn btn-multi btn-sm" data-buy="' + k + '">🪙 ' + it.cost + '</button></div></div>';
-    });
+    el.shopBody.innerHTML = h;
 
-    h += '<h4>盲盒（随机头像 / 称号）</h4>';
-    h += '<div class="shop-row"><div class="sr-l"><b>🎁 抽一次盲盒</b><i>普通 70% · 稀有 25% · 传说 5%；抽到重复的退 8 金币</i></div>' +
-      '<div class="sr-r"><button class="btn btn-primary btn-sm" data-box="1">🪙 ' + E2.BOX_COST + '</button></div></div>';
-    h += '<div class="shop-own">已有称号：' + ((own.titles && own.titles.length) ? own.titles.map(function (t) {
-      var on = (prof.title === t) ? ' ✓' : '';
-      return '<button class="tag-btn" data-title="' + esc(t) + '">' + esc(t) + on + '</button>';
-    }).join(' ') : '<span class="muted">还没有</span>') + '</div>';
-
-    h += '<h4>宠物</h4>';
-    h += '<div class="shop-row"><div class="sr-l"><b>⚡ 加速孵化</b><i>直接买 200 经验，早点孵出小鸡</i></div>' +
-      '<div class="sr-r"><button class="btn btn-multi btn-sm" data-boost="1">🪙 ' + E2.BOOST.cost + '</button></div></div>';
-    E2.PET_SKINS.forEach(function (sk) {
-      if (!sk.id) return;
-      var has = (own.skins || []).indexOf(sk.id) >= 0;
-      var on = prof.petSkin === sk.id;
-      h += '<div class="shop-row"><div class="sr-l"><b>' + E2.petOf(15).emoji + ' ' + sk.name + '</b><i>' +
-        (on ? '佩戴中' : has ? '已拥有，点一下换上' : '换上后首页的蛋就是这个色') + '</i></div>' +
-        '<div class="sr-r">' + (has
-          ? '<button class="btn btn-ghost btn-sm" data-skin="' + sk.id + '">' + (on ? '佩戴中' : '换上') + '</button>'
-          : '<button class="btn btn-multi btn-sm" data-skin="' + sk.id + '">🪙 ' + sk.cost + '</button>') +
-        '</div></div>';
-    });
-
-    h += '<p class="hint">金币来源：每日签到 5 个（连签满一周 +1）、每日挑战答对（3 / 5 / 10）。</p>';
-
-    openModal('🛍 商店', h, [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
-
-    var body = document.getElementById('modal-body');
-    body.querySelectorAll('[data-buy]').forEach(function (b) {
+    el.shopBody.querySelectorAll('[data-buy]').forEach(function (b) {
       b.addEventListener('click', function () {
-        UserAPI.buyItem(b.getAttribute('data-buy'), function (err, rec, out) {
+        UserAPI.buyItem(b.getAttribute('data-buy'), function (err, rec) {
           if (err) { alert(err); return; }
           if (rec) myProfile = rec;
-          renderHome(); refreshUserUI(); openShop();
+          renderHome(); renderShop(); refreshUserUI();
+          sfxTap();
         });
       });
     });
-    body.querySelectorAll('[data-box]').forEach(function (b) {
+    el.shopBody.querySelectorAll('[data-box]').forEach(function (b) {
       b.addEventListener('click', function () {
         UserAPI.openBox(function (err, rec, out) {
           if (err) { alert(err); return; }
           if (rec) myProfile = rec;
           renderHome(); refreshUserUI();
-          var tag = E2.RARITY_NAME[out.rarity] || '';
           sfxRight();
+          var tag = E2.RARITY_NAME[out.rarity] || '';
           openModal('🎁 ' + tag + '！',
             '<div class="box-win r' + out.rarity + '">' + (out.kind === 'avatar' ? out.value : '🏷') + '</div>' +
-            '<p class="empty-tip">' + (out.kind === 'avatar' ? '新头像「' : '新称号「') + out.value + '」' +
+            '<p class="empty-tip">' + (out.kind === 'avatar' ? '新头像「' : '新称号「') + esc(out.value) + '」' +
             (out.dup ? '（重复了，退 ' + out.refund + ' 金币）' : '') + '</p>' +
-            (out.kind === 'title' ? '<p class="hint">去个人主页或商店里点它即可佩戴。</p>' : ''),
-            [{ label: '再抽一次', cls: 'btn-multi', fn: openShop },
-             { label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+            (out.kind === 'title' ? '<p class="hint">在商店「盲盒」页点它就能佩戴。</p>' : ''),
+            [{ label: '再抽一次', cls: 'btn-multi', fn: function () { closeModal(); renderShop(); } },
+             { label: '好', cls: 'btn-ghost', fn: function () { closeModal(); renderShop(); } }]);
         });
       });
     });
-    body.querySelectorAll('[data-boost]').forEach(function (b) {
+    el.shopBody.querySelectorAll('[data-boost]').forEach(function (b) {
       b.addEventListener('click', function () {
-        UserAPI.addCoins(-E2.BOOST.cost, '加速孵化', function (e1, rec) {
-          if (e1) { alert(e1); return; }
-          UserAPI.addExp(E2.BOOST.exp, '加速孵化', function (e2, rec2) {
-            if (e2) { alert(e2); return; }
-            if (rec2) myProfile = rec2;
-            renderHome(); refreshUserUI(); sfxRight();
-            openModal('⚡ 孵化加速', '<div class="welcome-hello">+' + E2.BOOST.exp + ' 经验！</div>' +
-              '<p class="empty-tip">' + E2.petOf(Level.fromExp(myProfile.exp || 0).level).note + '</p>',
-              [{ label: '关闭', cls: 'btn-primary', fn: closeModal }]);
-          });
+        if (!canBoost()) { alert(boostTip()); return; }
+        UserAPI.buyBoost(function (err, rec, out) {
+          if (err) { alert(err); return; }
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI(); renderShop();
+          sfxRight();
+          confetti();
+          openModal('⚡ 孵化加速', '<div class="welcome-hello">+' + E2.BOOST.exp + ' 经验！</div>' +
+            '<p class="empty-tip">' + E2.petOf(Level.fromExp(myProfile.exp || 0).level).note + '</p>',
+            [{ label: '好', cls: 'btn-primary', fn: closeModal }]);
         });
       });
     });
-    body.querySelectorAll('[data-skin]').forEach(function (b) {
+    el.shopBody.querySelectorAll('[data-skin]').forEach(function (b) {
       b.addEventListener('click', function () {
         var id = b.getAttribute('data-skin');
-        var sk = E2.skinOf(id);
         var has = ((myProfile.own && myProfile.own.skins) || []).indexOf(id) >= 0;
         var after = function (rec) {
           if (rec) myProfile = rec;
-          renderHome(); refreshUserUI(); openShop();
+          renderHome(); refreshUserUI(); renderShop();
         };
         if (has) UserAPI.equip('skin', id, function (e2, rec) { if (e2) { alert(e2); return; } after(rec); });
         else UserAPI.buySkin(id, function (e2, rec) {
@@ -1772,12 +1859,21 @@
         });
       });
     });
-    body.querySelectorAll('[data-title]').forEach(function (b) {
+    el.shopBody.querySelectorAll('[data-title]').forEach(function (b) {
       b.addEventListener('click', function () {
         UserAPI.equip('title', b.getAttribute('data-title'), function (e2, rec) {
           if (e2) { alert(e2); return; }
           if (rec) myProfile = rec;
-          renderHome(); refreshUserUI(); openShop();
+          renderHome(); refreshUserUI(); renderShop();
+        });
+      });
+    });
+    el.shopBody.querySelectorAll('[data-avatar]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        UserAPI.equip('avatar', b.getAttribute('data-avatar'), function (e2, rec) {
+          if (e2) { alert(e2); return; }
+          if (rec) myProfile = rec;
+          renderHome(); refreshUserUI(); renderShop();
         });
       });
     });

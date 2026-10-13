@@ -440,6 +440,24 @@ window.UserAPI = (function () {
       }, cb);
     },
 
+    /* 加速孵化：花金币买经验，每天限一次（否则等级能无限刷） */
+    buyBoost: function (cb) {
+      var E = window.Economy, L = window.Level;
+      if (!E) return cb && cb('金币模块没加载');
+      if (!L) return cb && cb('等级模块没加载');
+      patchSelf(function (rec) {
+        var day = L.dayKey();
+        if ((rec.boostDay || '') === day) return { fail: '今天的加速已经用过了，明天再来（每天限 1 次）' };
+        var coins = Math.floor(Number(rec.coins) || 0);
+        if (coins < E.BOOST.cost) return { fail: '金币不够（还差 ' + (E.BOOST.cost - coins) + ' 个）' };
+        rec.coins = coins - E.BOOST.cost;
+        rec.exp = Math.floor(Number(rec.exp) || 0) + E.BOOST.exp;
+        rec.boostDay = day;
+        addToday(rec, E.BOOST.exp);
+        return { exp: rec.exp, coins: rec.coins, gained: E.BOOST.exp, boostDay: day };
+      }, cb);
+    },
+
     /* 记录每日挑战结果 */
     saveDaily: function (st, cb) {
       patchSelf(function (rec) {

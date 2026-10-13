@@ -17,27 +17,27 @@
 
   <!-- ============ 开始页 ============ -->
   <section class="screen is-active" id="s-start">
+
     <div class="topbar">
       <button class="acct-chip" id="acct-chip">
         <span class="acct-av" id="acct-av">👤</span>
         <span class="acct-nick" id="acct-nick">未登录</span>
         <span class="acct-lv" id="acct-lv" hidden>Lv1</span>
       </button>
+      <button class="coin-chip" id="coin-chip" title="金币">
+        <span class="coin-ico">🪙</span><b id="home-coins">0</b>
+      </button>
     </div>
-
-    <div class="logo">🎧</div>
-    <h1 class="title">猜歌王</h1>
-    <p class="subtitle">华语流行 · 听歌猜名</p>
 
     <div class="pet-card" id="pet-card">
       <div class="pet-row">
         <div class="pet-emoji" id="pet-emoji">🥚</div>
         <div class="pet-info">
-          <div class="pet-name"><span id="pet-name">一颗蛋</span><span class="lv-badge" id="home-lv">Lv1</span></div>
+          <div class="pet-name"><span id="pet-name">一颗蛋</span></div>
           <div class="lv-bar"><div class="lv-fill" id="home-lv-fill"></div></div>
-          <div class="pet-note" id="pet-note">升到 3 级就裂壳</div>
+          <div class="pet-note" id="pet-note">登录后开始孵化，等级越高长得越大</div>
         </div>
-        <div class="coin-box" title="金币"><span class="coin-ico">🪙</span><b id="home-coins">0</b></div>
+        <span class="lv-badge" id="home-lv">Lv1</span>
       </div>
       <div class="pet-btns">
         <button class="btn btn-checkin" id="btn-home-checkin">📅 每日签到</button>
@@ -46,65 +46,82 @@
       <p class="pet-tip" id="home-checkin-tip"></p>
     </div>
 
+    <button class="btn btn-primary btn-play" id="btn-start">开始游戏</button>
+
     <div class="daily-card">
       <div class="daily-top">
         <div class="daily-t">
           <b>🎯 每日挑战</b>
-          <div class="daily-sub">10 道题 · 混合所有曲库 · 答对拿金币</div>
+          <div class="daily-sub">10 题混合 · 答对拿金币</div>
         </div>
         <div class="daily-left" id="daily-left">--:--</div>
       </div>
       <button class="btn btn-daily" id="btn-daily">开始挑战</button>
-      <div class="daily-coins">听声猜歌 +3 · 听歌猜歌手 +5 · 看词猜歌 +10 <span class="coin-ico">🪙</span>　｜　3 小时刷新，或花 15 金币换一批</div>
+      <div class="daily-coins">听声 +3 · 猜歌手 +5 · 看词 +10 <span class="coin-ico">🪙</span>　｜　3 小时刷新，或花 15 金币换一批</div>
     </div>
 
-    <div class="group">
-      <div class="group-label">选曲库</div>
-      <div class="tiles" id="pool-tiles">
-        <button class="tile is-active" data-pool="artist"><span class="tile-main">歌手专项</span><span class="tile-sub" data-count="artist">—</span></button>
-        <button class="tile" data-pool="zh"><span class="tile-main">国语</span><span class="tile-sub" data-count="zh">—</span></button>
-        <button class="tile" data-pool="yue"><span class="tile-main">粤语</span><span class="tile-sub" data-count="yue">—</span></button>
+    <div class="panel">
+      <div class="panel-row">
+        <div class="panel-k">曲库</div>
+        <div class="tiles tiles-3" id="pool-tiles">
+          <button class="tile is-active" data-pool="artist"><span class="tile-main">歌手专项</span><span class="tile-sub" data-count="artist">—</span></button>
+          <button class="tile" data-pool="zh"><span class="tile-main">国语</span><span class="tile-sub" data-count="zh">—</span></button>
+          <button class="tile" data-pool="yue"><span class="tile-main">粤语</span><span class="tile-sub" data-count="yue">—</span></button>
+        </div>
+      </div>
+
+      <div class="panel-row" id="artist-group">
+        <div class="panel-k">歌手 <span class="panel-hint" id="artist-hint">按拼音排</span></div>
+        <div class="artist-chips" id="artist-chips"></div>
+      </div>
+
+      <div class="panel-row">
+        <div class="panel-k">玩法</div>
+        <div class="tiles tiles-3" id="play-tiles">
+          <button class="tile is-active" data-play="sound"><span class="tile-main">听声猜歌</span><span class="tile-sub">听片段猜歌名</span></button>
+          <button class="tile" data-play="lyric"><span class="tile-main">看词猜歌</span><span class="tile-sub">看歌词猜歌名</span></button>
+          <button class="tile" data-play="singer"><span class="tile-main">听歌猜歌手</span><span class="tile-sub">听片段猜歌手</span></button>
+        </div>
+      </div>
+
+      <button class="panel-toggle" id="btn-more">更多选项 ▾</button>
+      <div class="panel-more" id="more-opts" hidden>
+        <div class="switches">
+          <button class="switch" id="sw-fill" aria-pressed="false">
+            <span class="sw-txt"><b>填空作答</b><i>不给选项，手打歌名 · 得分 ×2</i></span>
+            <span class="sw-dot"></span>
+          </button>
+          <button class="switch" id="sw-endless" aria-pressed="false">
+            <span class="sw-txt"><b>无限模式</b><i>一直出题，直到你退出或曲库用完</i></span>
+            <span class="sw-dot"></span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <div class="group" id="artist-group">
-      <div class="group-label">选歌手 <span id="artist-hint">全部歌曲都收全了</span></div>
-      <div class="artist-chips" id="artist-chips"></div>
+    <div class="nav-grid">
+      <button class="nav-btn" id="btn-multi"><span class="nb-ico">👥</span><span class="nb-t">多人对战</span></button>
+      <button class="nav-btn" id="btn-quiz"><span class="nb-ico">✍️</span><span class="nb-t">出题 / 答题</span></button>
+      <button class="nav-btn" id="btn-friends"><span class="nb-ico">💬</span><span class="nb-t">好友</span></button>
+      <button class="nav-btn" id="btn-scores"><span class="nb-ico">📊</span><span class="nb-t">今日分数</span></button>
+      <button class="nav-btn" id="btn-account"><span class="nb-ico">👤</span><span class="nb-t">我的主页</span></button>
+      <button class="nav-btn" id="btn-rules"><span class="nb-ico">📖</span><span class="nb-t">规则说明</span></button>
     </div>
+  </section>
 
-    <div class="group">
-      <div class="group-label">选玩法</div>
-      <div class="tiles tiles-3" id="play-tiles">
-        <button class="tile is-active" data-play="sound"><span class="tile-main">听声猜歌</span><span class="tile-sub">听片段猜歌名</span></button>
-        <button class="tile" data-play="lyric"><span class="tile-main">看词猜歌</span><span class="tile-sub">看歌词猜歌名</span></button>
-        <button class="tile" data-play="singer"><span class="tile-main">听歌猜歌手</span><span class="tile-sub">听片段猜歌手</span></button>
-      </div>
+  <!-- ============ 商店 ============ -->
+  <section class="screen" id="s-shop">
+    <div class="game-top">
+      <div class="badge">🛍 商店</div>
+      <button class="btn-quit" id="btn-shop-back">返回</button>
     </div>
-
-    <div class="group">
-      <div class="group-label">挑战选项</div>
-      <div class="switches">
-        <button class="switch" id="sw-fill" aria-pressed="false">
-          <span class="sw-txt"><b>填空作答</b><i>不给选项，手打歌名 · 得分 ×2</i></span>
-          <span class="sw-dot"></span>
-        </button>
-        <button class="switch" id="sw-endless" aria-pressed="false">
-          <span class="sw-txt"><b>无限模式</b><i>一直出题，直到你退出或曲库用完</i></span>
-          <span class="sw-dot"></span>
-        </button>
-      </div>
+    <div class="shop-coins">🪙 我的金币：<b id="shop-coins">0</b></div>
+    <div class="shop-tabs" id="shop-tabs">
+      <button class="on" data-t="item">道具</button>
+      <button data-t="box">盲盒</button>
+      <button data-t="pet">宠物</button>
     </div>
-
-    <button class="btn btn-primary" id="btn-start">开始游戏</button>
-    <button class="btn btn-multi" id="btn-multi">🎮 多人对战</button>
-    <button class="btn btn-quiz" id="btn-quiz">✍️ 出题 / 答题</button>
-
-    <div class="foot-links">
-      <button id="btn-rules">📖 规则</button>
-      <button id="btn-scores">🏆 分数</button>
-      <button id="btn-friends">👥 好友</button>
-      <button id="btn-account">👤 我的</button>
-    </div>
+    <div class="shop-body" id="shop-body"></div>
   </section>
 
   <!-- ============ 游戏页 ============ -->
