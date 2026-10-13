@@ -10,6 +10,9 @@
      gs2/bl/{账号}                    黑名单 [{name, at}]
      gs2/dm/{账号}/{对方}/{ts}        私信
      gs2/sc/{账号}                    最近答题成绩 [{code, author, score, right, total, at}]
+
+   读取策略：订阅后「一有数据就返回」，最多等 6 秒。
+   不用固定 sleep —— 公共服务的响应时间不稳定，固定等待会随机读空。
    --------------------------------------------------------------- */
 window.UserAPI = (function () {
   'use strict';
@@ -18,12 +21,15 @@ window.UserAPI = (function () {
   var NS = 'gs2';
   var NAME_KEY = 'gs_user_name';
   var ID_KEY = 'gs_room_id';
-  var MAX_SCORES = 20;
-  var MAX_DM = 60;
+  var MAX_SCORES = 30;
+  var MAX_DM = 80;
+  var WAIT_MS = 6000;
 
   var client = null;
   var cache = {};          // topic -> payload
   var listeners = [];      // [{re, fn}]
+  var subscribed = {};     // 已经订阅过的主题（避免重复订阅 → 服务端重推历史 → 死循环）
+  var desired = {};        // 断线重连后要恢复订阅的主题
 
   /* ---------------- 基础 ---------------- */
   function hash(s) {
@@ -32,6 +38,7 @@ window.UserAPI = (function () {
     return (h >>> 0).toString(16);
   }
   function enc(s) { return encodeURIComponent(String(s)); }
+  function reEsc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
   function tU(n) { return NS + '/u/' + enc(n); }
   function tFR(n) { return NS + '/fr/' + enc(n); }
   function tFL(n) { return NS + '/fl/' + enc(n); }
@@ -40,7 +47,7 @@ window.UserAPI = (function () {
   function tDMpre(n, peer) { return NS + '/dm/' + enc(n) + '/' + enc(peer) + '/'; }
   function tDM(n, peer, ts) { return tDMpre(n, peer) + ts; }
 
-  function later(fn) { setTimeout(fn, 30); }
+  function later(fn) { setTimeout(fn, 25); }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function myPid() {
     var v = null;
@@ -65,7 +72,12 @@ window.UserAPI = (function () {
 
     var settled = false;
     var timer = setTimeout(function () { if (!settled) { settled = true; cb('连接超时，检查网络'); } }, 16000);
-    client.on('connect', function () { if (!settled) { settled = true; clearTimeout(timer); cb(null); } });
+    client.on('connect', function () {
+      // 断线重连后把订阅恢复回来（clean session 会丢订阅）
+      var all = Object.keys(desired);
+      if (all.length) client.subscribe(all, { qos: 1 }, function () {});
+      if (!settled) { settled = true; clearTimeout(timer); cb(null); }
+    });
     client.on('error', function () {});
 
     client.on('message', function (topic, payload) {
@@ -86,21 +98,99 @@ window.UserAPI = (function () {
     });
   }
 
-  function sub(topic, cb) {
+  /* 主题匹配（支持 + 通配） */
+  function topicMatches(pattern, topic) {
+    if (pattern === topic) return true;
+    if (pattern.indexOf('+') < 0) return false;
+    var pp = pattern.split('/'), tp = topic.split('/');
+    if (pp.length !== tp.length) return false;
+    for (var i = 0; i < pp.length; i++) {
+      if (pp[i] === '+') continue;
+      if (pp[i] !== tp[i]) return false;
+    }
+    return true;
+  }
+
+  /* 缓存里有没有「匹配这个模式」的数据（模式可能是通配的，不能只按字面 key 查） */
+  function hasData(pattern) {
+    if (cache[pattern] !== undefined) return true;
+    for (var k in cache) { if (topicMatches(pattern, k)) return true; }
+    return false;
+  }
+
+  /* 只订阅一次：重复订阅会让服务端重推 retained 历史，进而触发「收到消息→刷新→再订阅」死循环 */
+  function ensureSub(topics, cb) {
     connect(function (err) {
-      if (err) return cb && cb(err);
-      client.subscribe(topic, { qos: 1 }, function () { later(function () { cb && cb(null); }); });
+      if (err) return cb(err);
+      var list = (Array.isArray(topics) ? topics : [topics]);
+      list.forEach(function (t) { desired[t] = 1; });
+      var todo = list.filter(function (t) { return !subscribed[t]; });
+      if (!todo.length) return cb(null);
+      client.subscribe(todo, { qos: 1 }, function () {
+        todo.forEach(function (t) { subscribed[t] = 1; });
+        cb(null);
+      });
     });
+  }
+
+  /* 订阅后等「指定主题」到达；到了立刻返回，最多等 ms 毫秒 */
+  function waitTopics(topics, ms, cb) {
+    var list = Array.isArray(topics) ? topics : [topics];
+    var deadline = Date.now() + (ms || WAIT_MS);
+    ensureSub(list, function (err) {
+      if (err) return cb(err);
+      var check = function () {
+        var missing = 0;
+        for (var i = 0; i < list.length; i++) if (!hasData(list[i])) missing++;
+        if (!missing) return cb(null, true);
+        if (Date.now() > deadline) return cb(null, false);
+        setTimeout(check, 120);
+      };
+      check();
+    });
+  }
+
+  /* 只要有一个主题到了就返回（用于私信这种「可能为空」的读取） */
+  function waitAny(topics, ms, cb) {
+    var list = Array.isArray(topics) ? topics : [topics];
+    var deadline = Date.now() + (ms || 2200);
+    ensureSub(list, function (err) {
+      if (err) return cb(err);
+      var check = function () {
+        for (var i = 0; i < list.length; i++) if (hasData(list[i])) return cb(null, true);
+        if (Date.now() > deadline) return cb(null, false);
+        setTimeout(check, 120);
+      };
+      check();
+    });
+  }
+
+  function sub(topic, cb) {
+    ensureSub(topic, function (err) { if (err) return cb && cb(err); later(function () { cb && cb(null); }); });
   }
 
   /* 订阅自己的所有频道，登录后调用 */
   function watchSelf(name, onChange) {
     if (onChange) {
       listeners = listeners.filter(function (l) { return l.tag !== 'self'; });
-      var re = new RegExp('^' + NS + '/(fr|fl|bl|dm|sc)/' + enc(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      var re = new RegExp('^' + NS + '/(fr|fl|bl|dm|sc)/' + reEsc(enc(name)));
       listeners.push({ tag: 'self', re: re, fn: function () { onChange(); } });
     }
-    return sub([tFR(name), tFL(name), tBL(name), tSC(name), tDMpre(name, '+')].join(','), function () {});
+    return sub([tFR(name), tFL(name), tBL(name), tSC(name), tDMpre(name, '+') + '+'], function () {});
+  }
+
+  /* 确保自己的「空列表」频道存在（retained），这样读取不用等超时 */
+  function ensureSelf(name, cb) {
+    var topics = [tFR(name), tFL(name), tBL(name), tSC(name)];
+    ensureSub(topics, function (err) {
+      if (err) return cb && cb(err);
+      setTimeout(function () {
+        topics.forEach(function (t) {
+          if (cache[t] === undefined) client.publish(t, '[]', { qos: 1, retain: true });
+        });
+        later(function () { cb && cb(null); });
+      }, 500);
+    });
   }
 
   /* ---------------- 对外 ---------------- */
@@ -116,42 +206,38 @@ window.UserAPI = (function () {
       name = String(name || '').trim();
       connect(function (err) {
         if (err) return cb(err);
-        client.subscribe(tU(name), { qos: 1 }, function () {
-          setTimeout(function () {
-            if (cache[tU(name)]) return cb('这个账号名已经被注册了，换一个，或者直接登录');
-            var rec = {
-              name: name, nick: name, hash: hash(name + '::' + pwd),
-              avatar: '🐱', createdAt: Date.now()
-            };
-            client.publish(tU(name), JSON.stringify(rec), { qos: 1, retain: true });
-            setTimeout(function () { saveName(name); cb(null, rec); }, 350);
-          }, 700);
+        // 只等一小会儿：查重不需要等满（等太久新用户注册会很慢）
+        waitTopics(tU(name), 1800, function () {
+          if (cache[tU(name)]) return cb('这个账号名已经被注册了，换一个，或者直接登录');
+          var rec = {
+            name: name, nick: name, hash: hash(name + '::' + pwd),
+            avatar: '🐱', createdAt: Date.now()
+          };
+          client.publish(tU(name), JSON.stringify(rec), { qos: 1, retain: true });
+          saveName(name);
+          ensureSelf(name, function () { cb(null, rec); });
         });
       });
     },
 
     login: function (name, pwd, cb) {
       name = String(name || '').trim();
-      connect(function (err) {
+      waitTopics(tU(name), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tU(name), { qos: 1 }, function () {
-          setTimeout(function () {
-            var rec = cache[tU(name)];
-            if (!rec) return cb('没有这个账号，先注册一个吧');
-            if (rec.hash !== hash(name + '::' + pwd)) return cb('密码不对');
-            saveName(name);
-            cb(null, rec);
-          }, 700);
-        });
+        var rec = cache[tU(name)];
+        if (!rec) return cb('没有这个账号，先注册一个吧');
+        if (rec.hash !== hash(name + '::' + pwd)) return cb('密码不对');
+        saveName(name);
+        ensureSelf(name, function () { cb(null, rec); });
       });
     },
 
     getProfile: function (name, cb) {
-      connect(function (err) {
+      waitTopics(tU(name), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tU(name), { qos: 1 }, function () {
-          setTimeout(function () { cb(cache[tU(name)] ? null : '没找到这个用户', cache[tU(name)] || null); }, 800);
-        });
+        var rec = cache[tU(name)];
+        if (!rec) return cb('没找到这个用户');
+        cb(null, rec);
       });
     },
 
@@ -159,185 +245,144 @@ window.UserAPI = (function () {
     updateProfile: function (patch, cb) {
       var me = savedName();
       if (!me) return cb('还没登录');
-      connect(function (err) {
+      waitTopics(tU(me), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tU(me), { qos: 1 }, function () {
-          setTimeout(function () {
-            var rec = cache[tU(me)];
-            if (!rec) return cb('账号资料没读到，稍后再试');
-            if (patch.nick !== undefined) rec.nick = String(patch.nick).slice(0, 12) || me;
-            if (patch.avatar !== undefined) rec.avatar = String(patch.avatar).slice(0, 4);
-            rec.updatedAt = Date.now();
-            client.publish(tU(me), JSON.stringify(rec), { qos: 1, retain: true });
-            later(function () { cb(null, clone(rec)); });
-          }, 600);
-        });
+        var rec = cache[tU(me)];
+        if (!rec) return cb('账号资料没读到，稍后再试');
+        if (patch.nick !== undefined) rec.nick = String(patch.nick).slice(0, 12) || me;
+        if (patch.avatar !== undefined) rec.avatar = String(patch.avatar).slice(0, 4);
+        rec.updatedAt = Date.now();
+        client.publish(tU(me), JSON.stringify(rec), { qos: 1, retain: true });
+        later(function () { cb(null, clone(rec)); });
       });
     },
 
     /* ===== 好友 ===== */
-    /* 取一批用户的资料（用于显示头像和昵称） */
     getProfiles: function (names, cb) {
-      if (!names || !names.length) return later(function () { cb(null, {}); });
-      connect(function (err) {
+      names = (names || []).filter(Boolean);
+      if (!names.length) return later(function () { cb(null, {}); });
+      waitTopics(names.map(tU), 4000, function (err) {
         if (err) return cb(err);
-        var topics = names.map(tU).join(',');
-        client.subscribe(topics, { qos: 1 }, function () {
-          setTimeout(function () {
-            var out = {};
-            names.forEach(function (n) { out[n] = cache[tU(n)] || { name: n, nick: n, avatar: '👤' }; });
-            cb(null, out);
-          }, 900);
-        });
+        var out = {};
+        names.forEach(function (n) { out[n] = cache[tU(n)] || { name: n, nick: n, avatar: '👤' }; });
+        cb(null, out);
       });
     },
 
-    /* 发好友申请（同时检查对方是否拉黑了我） */
     sendFriendRequest: function (to, cb) {
       var me = savedName();
       if (!me) return cb('还没登录');
       if (to === me) return cb('不能加自己');
-      connect(function (err) {
+      waitTopics([tU(to), tBL(to), tFR(to)], WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe([tU(to), tBL(to), tFR(to)].join(','), { qos: 1 }, function () {
-          setTimeout(function () {
-            if (!cache[tU(to)]) return cb('没有这个账号');
-            var bl = cache[tBL(to)] || [];
-            if (bl.some(function (x) { return x.name === me; })) return cb('对方把你拉黑了，加不了');
-            var fr = cache[tFR(to)] || [];
-            if (fr.some(function (x) { return x.from === me; })) return cb('已经发过申请了，等对方同意');
-            fr.push({ from: me, at: Date.now() });
-            client.publish(tFR(to), JSON.stringify(fr), { qos: 1, retain: true });
-            later(function () { cb(null); });
-          }, 800);
-        });
+        if (!cache[tU(to)]) return cb('没有这个账号');
+        var bl = cache[tBL(to)] || [];
+        if (bl.some(function (x) { return x.name === me; })) return cb('对方把你拉黑了，加不了');
+        var fl = cache[tFL(to)] || [];
+        if (fl.some(function (x) { return x.name === me; })) return cb('你们已经是好友了');
+        var fr = cache[tFR(to)] || [];
+        if (fr.some(function (x) { return x.from === me; })) return cb('已经发过申请了，等对方同意');
+        fr.push({ from: me, at: Date.now() });
+        client.publish(tFR(to), JSON.stringify(fr), { qos: 1, retain: true });
+        later(function () { cb(null); });
       });
     },
 
     getRequests: function (cb) {
       var me = savedName();
       if (!me) return later(function () { cb(null, []); });
-      connect(function (err) {
+      waitTopics(tFR(me), 2600, function (err) {
         if (err) return cb(err);
-        client.subscribe(tFR(me), { qos: 1 }, function () {
-          setTimeout(function () { cb(null, cache[tFR(me)] || []); }, 800);
-        });
+        cb(null, cache[tFR(me)] || []);
       });
     },
 
-    /* 同意申请：双方好友列表都加上 */
     acceptRequest: function (from, cb) {
       var me = savedName();
       if (!me) return cb('还没登录');
-      connect(function (err) {
+      waitTopics([tFR(me), tFL(me), tFL(from)], WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe([tFR(me), tFL(me), tFL(from)].join(','), { qos: 1 }, function () {
-          setTimeout(function () {
-            var fr = cache[tFR(me)] || [];
-            fr = fr.filter(function (x) { return x.from !== from; });
-            client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
+        var fr = (cache[tFR(me)] || []).filter(function (x) { return x.from !== from; });
+        client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
 
-            var mine = cache[tFL(me)] || [];
-            if (!mine.some(function (x) { return x.name === from; })) mine.push({ name: from, since: Date.now() });
-            client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
+        var mine = cache[tFL(me)] || [];
+        if (!mine.some(function (x) { return x.name === from; })) mine.push({ name: from, since: Date.now() });
+        client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
 
-            var theirs = cache[tFL(from)] || [];
-            if (!theirs.some(function (x) { return x.name === me; })) theirs.push({ name: me, since: Date.now() });
-            client.publish(tFL(from), JSON.stringify(theirs), { qos: 1, retain: true });
+        var theirs = cache[tFL(from)] || [];
+        if (!theirs.some(function (x) { return x.name === me; })) theirs.push({ name: me, since: Date.now() });
+        client.publish(tFL(from), JSON.stringify(theirs), { qos: 1, retain: true });
 
-            later(function () { cb(null); });
-          }, 800);
-        });
+        later(function () { cb(null); });
       });
     },
 
     rejectRequest: function (from, cb) {
       var me = savedName();
-      connect(function (err) {
+      waitTopics(tFR(me), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tFR(me), { qos: 1 }, function () {
-          setTimeout(function () {
-            var fr = (cache[tFR(me)] || []).filter(function (x) { return x.from !== from; });
-            client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
-            later(function () { cb(null); });
-          }, 600);
-        });
+        var fr = (cache[tFR(me)] || []).filter(function (x) { return x.from !== from; });
+        client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
+        later(function () { cb(null); });
       });
     },
 
     getFriends: function (cb) {
       var me = savedName();
       if (!me) return later(function () { cb(null, []); });
-      connect(function (err) {
+      waitTopics(tFL(me), 2600, function (err) {
         if (err) return cb(err);
-        client.subscribe(tFL(me), { qos: 1 }, function () {
-          setTimeout(function () { cb(null, cache[tFL(me)] || []); }, 800);
-        });
+        cb(null, cache[tFL(me)] || []);
       });
     },
 
     removeFriend: function (name, cb) {
       var me = savedName();
-      connect(function (err) {
+      waitTopics([tFL(me), tFL(name)], WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe([tFL(me), tFL(name)].join(','), { qos: 1 }, function () {
-          setTimeout(function () {
-            var mine = (cache[tFL(me)] || []).filter(function (x) { return x.name !== name; });
-            client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
-            var theirs = (cache[tFL(name)] || []).filter(function (x) { return x.name !== me; });
-            client.publish(tFL(name), JSON.stringify(theirs), { qos: 1, retain: true });
-            later(function () { cb(null); });
-          }, 700);
-        });
+        var mine = (cache[tFL(me)] || []).filter(function (x) { return x.name !== name; });
+        client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
+        var theirs = (cache[tFL(name)] || []).filter(function (x) { return x.name !== me; });
+        client.publish(tFL(name), JSON.stringify(theirs), { qos: 1, retain: true });
+        later(function () { cb(null); });
       });
     },
 
     getBlocked: function (cb) {
       var me = savedName();
       if (!me) return later(function () { cb(null, []); });
-      connect(function (err) {
+      waitTopics(tBL(me), 2600, function (err) {
         if (err) return cb(err);
-        client.subscribe(tBL(me), { qos: 1 }, function () {
-          setTimeout(function () { cb(null, cache[tBL(me)] || []); }, 700);
-        });
+        cb(null, cache[tBL(me)] || []);
       });
     },
 
-    /* 拉黑：加进黑名单，同时把好友关系也断掉 */
     blockUser: function (name, cb) {
       var me = savedName();
-      connect(function (err) {
+      waitTopics([tBL(me), tFL(me), tFL(name), tFR(me)], WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe([tBL(me), tFL(me), tFL(name), tFR(me)].join(','), { qos: 1 }, function () {
-          setTimeout(function () {
-            var bl = cache[tBL(me)] || [];
-            if (!bl.some(function (x) { return x.name === name; })) bl.push({ name: name, at: Date.now() });
-            client.publish(tBL(me), JSON.stringify(bl), { qos: 1, retain: true });
+        var bl = cache[tBL(me)] || [];
+        if (!bl.some(function (x) { return x.name === name; })) bl.push({ name: name, at: Date.now() });
+        client.publish(tBL(me), JSON.stringify(bl), { qos: 1, retain: true });
 
-            var mine = (cache[tFL(me)] || []).filter(function (x) { return x.name !== name; });
-            client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
-            var theirs = (cache[tFL(name)] || []).filter(function (x) { return x.name !== me; });
-            client.publish(tFL(name), JSON.stringify(theirs), { qos: 1, retain: true });
-            var fr = (cache[tFR(me)] || []).filter(function (x) { return x.from !== name; });
-            client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
+        var mine = (cache[tFL(me)] || []).filter(function (x) { return x.name !== name; });
+        client.publish(tFL(me), JSON.stringify(mine), { qos: 1, retain: true });
+        var theirs = (cache[tFL(name)] || []).filter(function (x) { return x.name !== me; });
+        client.publish(tFL(name), JSON.stringify(theirs), { qos: 1, retain: true });
+        var fr = (cache[tFR(me)] || []).filter(function (x) { return x.from !== name; });
+        client.publish(tFR(me), JSON.stringify(fr), { qos: 1, retain: true });
 
-            later(function () { cb(null); });
-          }, 800);
-        });
+        later(function () { cb(null); });
       });
     },
 
     unblockUser: function (name, cb) {
       var me = savedName();
-      connect(function (err) {
+      waitTopics(tBL(me), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tBL(me), { qos: 1 }, function () {
-          setTimeout(function () {
-            var bl = (cache[tBL(me)] || []).filter(function (x) { return x.name !== name; });
-            client.publish(tBL(me), JSON.stringify(bl), { qos: 1, retain: true });
-            later(function () { cb(null); });
-          }, 600);
-        });
+        var bl = (cache[tBL(me)] || []).filter(function (x) { return x.name !== name; });
+        client.publish(tBL(me), JSON.stringify(bl), { qos: 1, retain: true });
+        later(function () { cb(null); });
       });
     },
 
@@ -346,28 +391,56 @@ window.UserAPI = (function () {
       var me = savedName();
       if (!me) return cb('还没登录');
       var ts = Date.now();
-      pub(tDM(to, me, ts), { from: me, to: to, text: String(text).slice(0, 200), at: ts }, cb);
-      /* 同时写一份到自己这边，方便看历史 */
-      pub(tDM(me, to, ts), { from: me, to: to, text: String(text).slice(0, 200), at: ts }, function () {});
+      var body = { from: me, to: to, text: String(text).slice(0, 300), at: ts };
+      connect(function (err) {
+        if (err) return cb && cb(err);
+        client.publish(tDM(to, me, ts), JSON.stringify(body), { qos: 1, retain: true });
+        client.publish(tDM(me, to, ts), JSON.stringify(body), { qos: 1, retain: true });
+        later(function () { cb && cb(null); });
+      });
     },
 
+    /* 读「我和 peer」的全部私信（两边都存一份，合并去重） */
     getDMs: function (peer, cb) {
       var me = savedName();
       if (!me) return later(function () { cb(null, []); });
-      connect(function (err) {
+      waitAny([tDMpre(me, peer) + '+', tDMpre(peer, me) + '+'], 2400, function (err) {
         if (err) return cb(err);
-        client.subscribe(tDMpre(me, peer) + '+', { qos: 1 }, function () {
-          setTimeout(function () {
-            var list = [];
-            var re = new RegExp('^' + NS + '/dm/' + enc(me).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/' + enc(peer).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(\\d+)$');
-            Object.keys(cache).forEach(function (t) {
-              var m = t.match(re);
-              if (m) list.push(cache[t]);
-            });
-            list.sort(function (a, b) { return a.at - b.at; });
-            cb(null, list.slice(-MAX_DM));
-          }, 900);
+        var re = new RegExp('^' + NS + '/dm/' + reEsc(enc(me)) + '/' + reEsc(enc(peer)) + '/(\\d+)$');
+        var list = [], seen = {};
+        Object.keys(cache).forEach(function (t) {
+          var m = t.match(re);
+          if (!m) return;
+          var rec = cache[t];
+          if (!rec || seen[rec.at + '|' + rec.text]) return;
+          seen[rec.at + '|' + rec.text] = 1;
+          list.push(rec);
         });
+        list.sort(function (a, b) { return a.at - b.at; });
+        cb(null, list.slice(-MAX_DM));
+      });
+    },
+
+    /* 会话列表：最近和谁聊过（基于本地缓存里的 dm 主题） */
+    getConversations: function (cb) {
+      var me = savedName();
+      if (!me) return later(function () { cb(null, []); });
+      sub(tDMpre(me, '+') + '+', function () {
+        setTimeout(function () {
+          var pre = NS + '/dm/' + enc(me) + '/';
+          var last = {};
+          Object.keys(cache).forEach(function (t) {
+            if (t.indexOf(pre) !== 0) return;
+            var rec = cache[t];
+            if (!rec || !rec.at) return;
+            var peer = t.slice(pre.length).split('/')[0];
+            peer = decodeURIComponent(peer);
+            if (!last[peer] || rec.at > last[peer].at) last[peer] = rec;
+          });
+          var out = Object.keys(last).map(function (k) { return last[k]; });
+          out.sort(function (a, b) { return b.at - a.at; });
+          cb(null, out);
+        }, 1800);
       });
     },
 
@@ -375,8 +448,11 @@ window.UserAPI = (function () {
     watchInbox: function (cb) {
       var me = savedName();
       if (!me) return;
-      var re = new RegExp('^' + NS + '/dm/' + enc(me).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/([^/]+)/(\\d+)$');
-      listeners.push({ tag: 'inbox', re: re, fn: cb });
+      listeners = listeners.filter(function (l) { return l.tag !== 'inbox'; });
+      if (cb) {
+        var re = new RegExp('^' + NS + '/dm/' + reEsc(enc(me)) + '/([^/]+)/(\\d+)$');
+        listeners.push({ tag: 'inbox', re: re, fn: cb });
+      }
       sub(tDMpre(me, '+') + '+', function () {});
     },
 
@@ -384,29 +460,24 @@ window.UserAPI = (function () {
     pushScore: function (rec, cb) {
       var me = savedName();
       if (!me) return cb && cb(null);
-      connect(function (err) {
+      waitTopics(tSC(me), WAIT_MS, function (err) {
         if (err) return cb && cb(err);
-        client.subscribe(tSC(me), { qos: 1 }, function () {
-          setTimeout(function () {
-            var list = cache[tSC(me)] || [];
-            list.push({
-              code: rec.code, author: rec.author,
-              score: rec.score, right: rec.right, total: rec.total, at: Date.now()
-            });
-            list = list.slice(-MAX_SCORES);
-            client.publish(tSC(me), JSON.stringify(list), { qos: 1, retain: true });
-            later(function () { cb && cb(null); });
-          }, 600);
+        var list = cache[tSC(me)] || [];
+        list.push({
+          code: rec.code || '', author: rec.author || '',
+          score: rec.score, right: rec.right, total: rec.total,
+          mode: rec.mode || '', at: Date.now()
         });
+        list = list.slice(-MAX_SCORES);
+        client.publish(tSC(me), JSON.stringify(list), { qos: 1, retain: true });
+        later(function () { cb && cb(null); });
       });
     },
 
     getScores: function (name, cb) {
-      connect(function (err) {
+      waitTopics(tSC(name), WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(tSC(name), { qos: 1 }, function () {
-          setTimeout(function () { cb(null, cache[tSC(name)] || []); }, 800);
-        });
+        cb(null, cache[tSC(name)] || []);
       });
     },
 
@@ -421,7 +492,7 @@ window.UserAPI = (function () {
         }
         paper.createdAt = Date.now();
         client.publish(NS + '/quiz/' + paper.code + '/paper', JSON.stringify(paper), { qos: 1, retain: true });
-        client.subscribe(NS + '/quiz/' + paper.code + '/result/+', { qos: 1 }, function () {
+        ensureSub(NS + '/quiz/' + paper.code + '/result/+', function () {
           later(function () { cb(null, paper); });
         });
       });
@@ -433,23 +504,19 @@ window.UserAPI = (function () {
         var re = new RegExp('^' + NS + '/quiz/' + code + '/result/');
         listeners = listeners.filter(function (l) { return l.tag !== 'quiz'; });
         listeners.push({ tag: 'quiz', re: re, fn: function () { emitQuiz(code, cb); } });
-        client.subscribe(NS + '/quiz/' + code + '/result/+', { qos: 1 }, function () {
-          setTimeout(function () { emitQuiz(code, cb); }, 800);
+        ensureSub(NS + '/quiz/' + code + '/result/+', function () {
+          setTimeout(function () { emitQuiz(code, cb); }, 1200);
         });
       });
     },
 
     fetchQuiz: function (code, cb) {
       code = String(code || '').toUpperCase();
-      connect(function (err) {
+      waitTopics(NS + '/quiz/' + code + '/paper', WAIT_MS, function (err) {
         if (err) return cb(err);
-        client.subscribe(NS + '/quiz/' + code + '/paper', { qos: 1 }, function () {
-          setTimeout(function () {
-            var p = cache[NS + '/quiz/' + code + '/paper'];
-            if (!p) return cb('没找到这个答题码，检查一下');
-            cb(null, p);
-          }, 800);
-        });
+        var p = cache[NS + '/quiz/' + code + '/paper'];
+        if (!p) return cb('没找到这个答题码，检查一下');
+        cb(null, p);
       });
     },
 
@@ -469,7 +536,8 @@ window.UserAPI = (function () {
       });
     },
 
-    watchSelf: watchSelf
+    watchSelf: watchSelf,
+    ensureSelf: ensureSelf
   };
 
   function emitQuiz(code, cb) {

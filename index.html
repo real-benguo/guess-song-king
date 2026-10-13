@@ -17,6 +17,13 @@
 
   <!-- ============ 开始页 ============ -->
   <section class="screen is-active" id="s-start">
+    <div class="topbar">
+      <button class="acct-chip" id="acct-chip">
+        <span class="acct-av" id="acct-av">👤</span>
+        <span class="acct-nick" id="acct-nick">未登录</span>
+      </button>
+    </div>
+
     <div class="logo">🎧</div>
     <h1 class="title">猜歌王</h1>
     <p class="subtitle">华语流行 · 听歌猜名</p>
@@ -24,17 +31,23 @@
     <div class="group">
       <div class="group-label">选曲库</div>
       <div class="tiles" id="pool-tiles">
-        <button class="tile" data-pool="jay"><span class="tile-main">周杰伦</span><span class="tile-sub" data-count="jay">—</span></button>
-        <button class="tile is-active" data-pool="zh"><span class="tile-main">国语</span><span class="tile-sub" data-count="zh">—</span></button>
+        <button class="tile is-active" data-pool="artist"><span class="tile-main">歌手专项</span><span class="tile-sub" data-count="artist">—</span></button>
+        <button class="tile" data-pool="zh"><span class="tile-main">国语</span><span class="tile-sub" data-count="zh">—</span></button>
         <button class="tile" data-pool="yue"><span class="tile-main">粤语</span><span class="tile-sub" data-count="yue">—</span></button>
       </div>
     </div>
 
+    <div class="group" id="artist-group">
+      <div class="group-label">选歌手 <span id="artist-hint">全部歌曲都收全了</span></div>
+      <div class="artist-chips" id="artist-chips"></div>
+    </div>
+
     <div class="group">
       <div class="group-label">选玩法</div>
-      <div class="tiles" id="play-tiles">
-        <button class="tile is-active" data-play="sound"><span class="tile-main">听声猜歌</span><span class="tile-sub">听片段猜</span></button>
-        <button class="tile" data-play="lyric"><span class="tile-main">看词猜歌</span><span class="tile-sub">看歌词猜</span></button>
+      <div class="tiles tiles-3" id="play-tiles">
+        <button class="tile is-active" data-play="sound"><span class="tile-main">听声猜歌</span><span class="tile-sub">听片段猜歌名</span></button>
+        <button class="tile" data-play="lyric"><span class="tile-main">看词猜歌</span><span class="tile-sub">看歌词猜歌名</span></button>
+        <button class="tile" data-play="singer"><span class="tile-main">听歌猜歌手</span><span class="tile-sub">听片段猜歌手</span></button>
       </div>
     </div>
 
@@ -67,7 +80,7 @@
   <!-- ============ 游戏页 ============ -->
   <section class="screen" id="s-game">
     <div class="game-top">
-      <div class="badge" id="badge">周杰伦专项 · 前奏猜歌</div>
+      <div class="badge" id="badge">歌手专项 · 听声猜歌</div>
       <button class="btn-quit" id="btn-quit">退出</button>
     </div>
 
@@ -88,10 +101,11 @@
       <div class="lyric-box" id="lyric-box" hidden>
         <p class="lyric-text" id="lyric-text"></p>
         <button class="btn-listen" id="btn-listen">🔊 听一下这段</button>
+        <p class="lyric-note">看词猜歌 · 不限时，答对 +5 分；听了音乐答对 +1 分</p>
       </div>
 
       <p class="player-tip" id="player-tip">点击播放片段</p>
-      <div class="timer"><div class="timer-fill" id="timer-fill"></div></div>
+      <div class="timer" id="timer"><div class="timer-fill" id="timer-fill"></div></div>
       <div class="volume">
         <span class="vol-ico" id="vol-ico">🔊</span>
         <input type="range" id="volume" min="0" max="100" value="100" aria-label="音量" />
@@ -132,10 +146,11 @@
     <h2 class="page-title">🎮 多人对战</h2>
     <p class="page-sub">和朋友同一首歌、同时抢答</p>
 
-    <div class="group">
+    <div class="group" id="lobby-name-group">
       <div class="group-label">你的名字</div>
       <input type="text" id="lobby-name" class="text-input" placeholder="起个名字（最多 8 个字）" maxlength="8" autocomplete="off" />
     </div>
+    <p class="hint lobby-as" id="lobby-as"></p>
 
     <button class="btn btn-primary" id="btn-create">创建房间</button>
 
@@ -211,6 +226,7 @@
         <div class="seg" id="mk-play">
           <button class="on" data-v="sound">听声猜歌</button>
           <button data-v="lyric">看词猜歌</button>
+          <button data-v="singer">听歌猜歌手</button>
         </div>
       </div>
       <div class="group">
@@ -321,6 +337,28 @@
 
     <div class="pane" id="pane-freq" hidden>
       <div class="results" id="req-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 聊天（微信式） ============ -->
+  <section class="screen" id="s-chat">
+    <div class="chat-top">
+      <button class="btn-quit" id="btn-chat-back">‹ 返回</button>
+      <div class="chat-who">
+        <span class="av-sm" id="chat-av">👤</span>
+        <span class="chat-name" id="chat-name">—</span>
+      </div>
+      <button class="btn-quit" id="btn-chat-more">⋯</button>
+    </div>
+
+    <div class="chat-body" id="chat-body"></div>
+
+    <div class="emoji-row" id="emoji-row" hidden></div>
+
+    <div class="chat-input-row">
+      <button class="emoji-btn" id="btn-emoji" title="表情">😊</button>
+      <input type="text" id="chat-text" class="text-input" placeholder="说点什么…" maxlength="300" autocomplete="off" />
+      <button class="btn btn-primary btn-sm" id="btn-chat-send">发送</button>
     </div>
   </section>
 

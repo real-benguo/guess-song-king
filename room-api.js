@@ -22,6 +22,7 @@ window.RoomAPI = (function () {
   var cache = {};
   var isHostClient = false;
   var sweepTimer = null;
+  var desired = {};          // 订阅过的主题（重连后恢复）
 
   function uid() { return 'p' + Math.random().toString(36).slice(2, 10); }
   function myId() {
@@ -59,6 +60,9 @@ window.RoomAPI = (function () {
     }, 16000);
 
     client.on('connect', function () {
+      // 断线重连后恢复订阅（clean session 会丢订阅）
+      var all = Object.keys(desired);
+      if (all.length) client.subscribe(all, { qos: 1 }, function () {});
       if (settled) return;
       settled = true; clearTimeout(timer);
       cb(null);
@@ -221,6 +225,7 @@ window.RoomAPI = (function () {
           updatedAt: Date.now()
         };
         client.subscribe(tUp(code), { qos: 1 }, function () {
+          desired[tUp(code)] = 1;
           publishState();
           startSweep();
           later(function () { cb(null, clone(myRoom)); });
@@ -238,6 +243,7 @@ window.RoomAPI = (function () {
         cache[code] = null;
 
         client.subscribe(tState(code), { qos: 1 }, function () {
+          desired[tState(code)] = 1;
           // 等 retained 状态到达
           setTimeout(function () {
             var st = cache[code];

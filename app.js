@@ -19,6 +19,7 @@
     screens: document.querySelectorAll('.screen'),
     poolTiles: document.querySelectorAll('#pool-tiles .tile'),
     playTiles: document.querySelectorAll('#play-tiles .tile'),
+    artistGroup: $('artist-group'), artistChips: $('artist-chips'), artistHint: $('artist-hint'),
     swFill: $('sw-fill'), swEndless: $('sw-endless'),
     btnStart: $('btn-start'), btnAgain: $('btn-again'), btnHome: $('btn-home'),
     btnRules: $('btn-rules'), btnScores: $('btn-scores'), btnQuit: $('btn-quit'),
@@ -26,7 +27,7 @@
     hudIdx: $('hud-idx'), hudScore: $('hud-score'), hudRight: $('hud-right'),
     disc: $('disc'), discIco: $('disc-ico'),
     lyricBox: $('lyric-box'), lyricText: $('lyric-text'), btnListen: $('btn-listen'),
-    playerTip: $('player-tip'), timerFill: $('timer-fill'),
+    playerTip: $('player-tip'), timerFill: $('timer-fill'), timer: $('timer'),
     volume: $('volume'), volIco: $('vol-ico'),
     options: $('options'), dots: $('dots'),
     fillArea: $('fill-area'), fillInput: $('fill-input'), btnSubmit: $('btn-submit'),
@@ -70,19 +71,36 @@
     friendList: $('friend-list'),
     frSearch: $('fr-search'), btnFrSearch: $('btn-fr-search'), frSearchResult: $('fr-search-result'),
     blCount: $('bl-count'), blList: $('bl-list'),
-    reqBadge: $('req-badge'), reqList: $('req-list')
+    reqBadge: $('req-badge'), reqList: $('req-list'),
+    // 多人：已登录提示
+    lobbyNameGroup: $('lobby-name-group'), lobbyAs: $('lobby-as'),
+    // 聊天
+    btnChatBack: $('btn-chat-back'), chatAv: $('chat-av'), chatName: $('chat-name'),
+    btnChatMore: $('btn-chat-more'), chatBody: $('chat-body'),
+    emojiRow: $('emoji-row'), btnEmoji: $('btn-emoji'),
+    chatText: $('chat-text'), btnChatSend: $('btn-chat-send'),
+    // 首页账号胶囊
+    acctChip: $('acct-chip'), acctAv: $('acct-av'), acctNick: $('acct-nick')
   };
 
   var audio = new Audio();
   audio.preload = 'auto';
 
-  var pool = 'zh', play = 'sound', fill = false, endless = false;
-  var POOL_NAME = { jay: '周杰伦专项', zh: '国语专项', yue: '粤语专项' };
-  var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌' };
+  var pool = 'artist', artistSel = '周杰伦', play = 'sound', fill = false, endless = false;
+  var POOL_NAME = { artist: '歌手专项', zh: '国语专项', yue: '粤语专项' };
+  var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌', singer: '听歌猜歌手' };
+  var LYRIC_HIT = 5;      // 看词猜歌：直接答对
+  var LYRIC_PLAYED = 1;   // 看词猜歌：听了音乐才答对
+  var ARTIST_MIN = 30;    // 曲目数达到这个量的歌手才进「歌手专项」
 
   var state = null, rafId = null, locked = false, nextTimer = null;
 
   /* ---------------- 工具 ---------------- */
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
   function shuffle(a) {
     a = a.slice();
     for (var i = a.length - 1; i > 0; i--) {
@@ -98,13 +116,19 @@
   function fmt(n) { return (n % 1 === 0) ? String(n) : n.toFixed(1); }
 
   function poolOf(p) {
-    if (p === 'jay') return DB.filter(function (s) { return s.a === '周杰伦'; });
+    if (p === 'artist') return DB.filter(function (s) { return s.a === artistSel; });
     if (p === 'yue') return DB.filter(function (s) { return s.l === 'yue'; });
     return DB.filter(function (s) { return s.l !== 'yue'; });
   }
   function gamePool() {
     var p = poolOf(pool);
     if (play === 'lyric') p = p.filter(function (s) { return s.ly && s.ly.length > 40; });
+    if (play === 'singer') {
+      // 听歌猜歌手：库里至少要有 4 位不同歌手，不然出不了题
+      var arts = {};
+      p.forEach(function (s) { arts[s.a] = 1; });
+      if (Object.keys(arts).length < 4) p = poolOf('zh');
+    }
     return p;
   }
 
@@ -126,11 +150,13 @@
   /* ---------------- 出题 ---------------- */
   function makeQuestion(correct) {
     var p = state.allPool;
+    var isSinger = (play === 'singer');
+    var key = isSinger ? 'a' : 't';
     var dis = [], taken = {}, cand = shuffle(p);
-    taken[correct.t] = 1;
+    taken[correct[key]] = 1;
     for (var j = 0; j < cand.length && dis.length < 3; j++) {
-      if (taken[cand[j].t]) continue;
-      taken[cand[j].t] = 1;
+      if (taken[cand[j][key]]) continue;
+      taken[cand[j][key]] = 1;
       dis.push(cand[j]);
     }
     if (dis.length < 3) return null;
@@ -186,6 +212,7 @@
       try { audio.currentTime = start; } catch (e) {}
       var pr = audio.play();
       var ok = function () {
+        if (state) state.played = true;    // 看词猜歌：听过音乐就只能拿 1 分
         el.disc.classList.add('is-playing');
         el.discIco.textContent = '❚❚';
         el.playerTip.textContent = '🎵 播放中…';
@@ -210,6 +237,15 @@
   function startTimer() {
     stopTimer();
     state.tStart = performance.now();
+    if (play === 'lyric') {
+      // 看词猜歌不限时
+      state.usedSec = 0;
+      el.timerFill.style.width = '100%';
+      el.timerFill.classList.remove('is-low');
+      if (el.timer) el.timer.classList.add('is-off');
+      return;
+    }
+    if (el.timer) el.timer.classList.remove('is-off');
     var tick = function () {
       var used = (performance.now() - state.tStart) / 1000;
       state.usedSec = used;
@@ -236,7 +272,12 @@
 
     var gain = 0;
     if (isRight) {
-      gain = scoreFor(state.usedSec);
+      if (play === 'lyric') {
+        // 看词猜歌：不限时。直接答对 +5；听了音乐才答对 +1
+        gain = state.played ? LYRIC_PLAYED : LYRIC_HIT;
+      } else {
+        gain = scoreFor(state.usedSec);
+      }
       if (fill && !isMulti) gain *= 2;
       state.score += gain;
       state.right++;
@@ -246,9 +287,8 @@
       markDot(true);
     } else {
       sfxWrong();
-      el.playerTip.textContent = isTimeout
-        ? ('⏰ 超时了 · 正确答案：' + q.correct.a + '《' + q.correct.t + '》')
-        : ('❌ 答错了 · 正确答案：' + q.correct.a + '《' + q.correct.t + '》');
+      var ans = (play === 'singer') ? ('正确答案：' + q.correct.a) : ('正确答案：' + q.correct.a + '《' + q.correct.t + '》');
+      el.playerTip.textContent = (isTimeout ? '⏰ 超时了 · ' : '❌ 答错了 · ') + ans;
       revealAnswer(userText);
       markDot(false);
     }
@@ -268,7 +308,7 @@
     var q = state.current;
     if (fill) {
       el.fillInput.value = '';
-      el.fillInput.placeholder = q.correct.t;
+      el.fillInput.placeholder = (play === 'singer') ? q.correct.a : q.correct.t;
       el.fillInput.classList.add('is-reveal');
       return;
     }
@@ -308,10 +348,12 @@
     el.timerFill.style.width = '100%';
     el.timerFill.classList.remove('is-low');
     state.usedSec = 0;
+    state.played = false;
 
     el.disc.hidden = isLyric;
     el.lyricBox.hidden = !isLyric;
-    el.playerTip.textContent = isLyric ? '根据歌词猜歌名' : '点击播放片段';
+    el.playerTip.textContent = isLyric ? '根据歌词猜歌名（不限时）'
+      : (play === 'singer' ? '点击播放片段，猜是哪位歌手' : '点击播放片段');
     el.lyricText.textContent = isLyric ? lyricHint(q.correct) : '';
 
     // 选项 / 填空
@@ -320,16 +362,17 @@
     el.options.innerHTML = '';
     if (fill) {
       el.fillInput.value = '';
-      el.fillInput.placeholder = '输入歌名后按回车';
+      el.fillInput.placeholder = (play === 'singer' ? '输入歌手名后按回车' : '输入歌名后按回车');
       el.fillInput.classList.remove('is-reveal');
       el.fillInput.disabled = false;
       el.btnSubmit.disabled = false;
     } else {
-      q.opts.forEach(function (s) {
+      q.opts.forEach(function (s, i) {
         var b = document.createElement('button');
         b.className = 'opt';
-        b.textContent = s.t;
-        b.addEventListener('click', function () { judge(s === q.correct, s.t); });
+        b.setAttribute('data-k', 'ABCD'[i] || '');
+        b.textContent = (play === 'singer') ? s.a : s.t;
+        b.addEventListener('click', function () { judge(s === q.correct, b.textContent); });
         el.options.appendChild(b);
       });
     }
@@ -436,26 +479,49 @@
     return '' +
       '<h4>🎯 三种曲库 × 三种玩法</h4>' +
       '<ul>' +
-      '<li><b>曲库</b>：周杰伦专项 / 国语专项 / 粤语专项</li>' +
-      '<li><b>玩法</b>：前奏猜歌（听开头）、随机猜歌（听片段）、歌词猜歌（看歌词）</li>' +
+      '<li><b>曲库</b>：歌手专项（挑一位歌手，只听他/她的歌）/ 国语专项 / 粤语专项</li>' +
+      '<li><b>玩法</b>：听声猜歌（听片段猜歌名）、看词猜歌（看歌词猜歌名）、听歌猜歌手（听片段猜是哪位歌手）</li>' +
+      '<li>「听歌猜歌手」会自动切到国语/粤语曲库，因为需要多位歌手</li>' +
+      '</ul>' +
+      '<h4>🎵 听声猜歌 / 听歌猜歌手 · 计分</h4>' +
+      '<ul>' +
+      '<li>每题最长 30 秒，超时算答错</li>' +
+      '<li>答对按用时给分 —— <span class="hl">3 秒内 5 分</span>、8 秒内 3 分、15 秒内 1 分、更久 0.5 分</li>' +
+      '</ul>' +
+      '<h4>📖 看词猜歌 · 计分</h4>' +
+      '<ul>' +
+      '<li><b>不限时</b>，慢慢想，答出来就算</li>' +
+      '<li>直接答对 <span class="hl">+5 分</span></li>' +
+      '<li>如果点了「听一下这段」再答对，只 <span class="hl">+1 分</span></li>' +
       '</ul>' +
       '<h4>✍️ 挑战选项</h4>' +
       '<ul>' +
       '<li><b>填空作答</b>：不给选项，自己打出歌名，完全正确才算对，<span class="hl">得分 ×2</span></li>' +
       '<li><b>无限模式</b>：题目一直出，直到你点「退出」或曲库用完；可与填空叠加</li>' +
       '</ul>' +
-      '<h4>📊 计分规则</h4>' +
+      '<h4>📊 通用规则</h4>' +
       '<ul>' +
       '<li>每题<b>只有一次</b>作答机会</li>' +
-      '<li>答对：按用时给分 —— <span class="hl">3 秒内 5 分</span>、8 秒内 3 分、15 秒内 1 分、更久 0.5 分</li>' +
-      '<li>答错 / 超时：<b>不扣分</b>，亮出正确答案，3 秒后进入下一题</li>' +
-      '<li>填空模式下所有得分 <span class="hl">×2</span></li>' +
+      '<li>答错：<b>不扣分</b>，亮出正确答案，3 秒后进入下一题</li>' +
+      '<li>普通模式每局 10 题</li>' +
+      '</ul>' +
+      '<h4>🎮 多人对战</h4>' +
+      '<ul>' +
+      '<li>房主建房，把 6 位房间码发给朋友，输码进来</li>' +
+      '<li>只有房主能改设置：玩法（有限题·比速度 / 限时·比总分）、题目数量、时长、题目类型</li>' +
+      '<li>登录后自动用你的昵称，不用再起名字</li>' +
+      '<li>结束后按分数排名，第一名是 MVP</li>' +
+      '</ul>' +
+      '<h4>👥 好友</h4>' +
+      '<ul>' +
+      '<li>搜账号发申请，对方同意即成好友</li>' +
+      '<li>可以私信、邀请对战、看 TA 的成绩、删除、拉黑</li>' +
+      '<li>拉黑后对方无法再加你，除非你把他移出黑名单</li>' +
       '</ul>' +
       '<h4>⏱ 说明</h4>' +
       '<ul>' +
-      '<li>每题最长 30 秒，超时算答错</li>' +
-      '<li>普通模式每局 10 题；无限模式直到你退出</li>' +
       '<li>音源为 Apple 公开试听片段（约 30 秒），<b>不一定从歌曲开头开始</b></li>' +
+      '<li>账号是轻量账号：密码只做简单哈希，<b>别用重要密码</b></li>' +
       '</ul>';
   }
 
@@ -492,6 +558,20 @@
   }
 
   /* ---------------- 结算 ---------------- */
+  /* 把这一局成绩记到自己的账号下（好友才能看到） */
+  function pushMyScore(extra) {
+    if (!UserAPI.savedName()) return;
+    if (!state) return;
+    UserAPI.pushScore({
+      code: extra.code || '',
+      author: extra.author || '',
+      mode: extra.mode || '',
+      score: state.score,
+      right: state.right,
+      total: state.answered
+    }, function () {});
+  }
+
   function endGame(reason) {
     if (!state || state.over) return;
     state.over = true;
@@ -520,14 +600,14 @@
         right: state.right,
         total: state.answered
       }, function () {});
-      UserAPI.pushScore({
-        code: takeCtx.code,
-        author: takeCtx.paper.author,
-        score: state.score,
-        right: state.right,
-        total: state.answered
-      }, function () {});
     }
+    // 每一局都记一份成绩，好友那边才看得到
+    pushMyScore({
+      code: state.take && takeCtx ? takeCtx.code : '',
+      author: state.take && takeCtx ? (takeCtx.paper.author || '匿名')
+        : (pool === 'artist' ? artistSel + '专项' : POOL_NAME[pool]) + ' · ' + PLAY_NAME[play],
+      mode: state.take ? '答题' : (endless ? '无限' : '单机')
+    });
 
     el.rank.textContent = r;
     var isBest = false;
@@ -597,7 +677,7 @@
       }
     }
 
-    var tags = [POOL_NAME[pool], PLAY_NAME[play]];
+    var tags = [pool === 'artist' ? (artistSel + '专项') : POOL_NAME[pool], PLAY_NAME[play]];
     if (fill) tags.push('填空×2');
     if (endless) tags.push('无限');
     el.badge.textContent = tags.join(' · ');
@@ -606,12 +686,43 @@
     nextQuestion();
   }
 
+  /* 歌手专项：列出曲目够多的歌手 */
+  function artistStats() {
+    var m = {};
+    DB.forEach(function (s) { m[s.a] = (m[s.a] || 0) + 1; });
+    return Object.keys(m).map(function (a) { return { name: a, n: m[a] }; })
+      .filter(function (x) { return x.n >= ARTIST_MIN; })
+      .sort(function (a, b) { return b.n - a.n; });
+  }
+
+  function renderArtistChips() {
+    if (!el.artistChips) return;
+    var list = artistStats();
+    if (!list.some(function (x) { return x.name === artistSel; }) && list.length) artistSel = list[0].name;
+    el.artistChips.innerHTML = '';
+    list.forEach(function (x) {
+      var b = document.createElement('button');
+      b.className = 'artist-chip' + (x.name === artistSel ? ' on' : '');
+      b.innerHTML = '<span class="ac-t"></span><span class="ac-n"></span>';
+      b.querySelector('.ac-t').textContent = x.name;
+      b.querySelector('.ac-n').textContent = x.n;
+      b.addEventListener('click', function () {
+        artistSel = x.name;
+        sfxTap();
+        renderArtistChips();
+        refreshCounts();
+      });
+      el.artistChips.appendChild(b);
+    });
+  }
+
   function refreshCounts() {
-    var map = { jay: poolOf('jay').length, zh: poolOf('zh').length, yue: poolOf('yue').length };
+    var map = { artist: poolOf('artist').length, zh: poolOf('zh').length, yue: poolOf('yue').length };
     Object.keys(map).forEach(function (k) {
       var node = document.querySelector('[data-count="' + k + '"]');
       if (node) node.textContent = map[k] + ' 首';
     });
+    if (el.artistGroup) el.artistGroup.hidden = (pool !== 'artist');
   }
 
   /* ================= 多人对战 ================= */
@@ -637,9 +748,32 @@
     return out;
   }
 
+  /* 多人里的显示名：登录了就用昵称，没登录才让用户自己填 */
+  function myRoomName() {
+    var me = UserAPI.savedName();
+    if (!me) return '';
+    var n = (myProfile && myProfile.nick) || me;
+    return String(n).slice(0, 8);
+  }
+  function pickName() {
+    var me = UserAPI.savedName();
+    if (me) return myRoomName();
+    return (el.lobbyName && el.lobbyName.value || '').trim().slice(0, 8);
+  }
+
   function goLobby() {
     show('s-lobby');
-    if (el.lobbyName) el.lobbyName.value = loadName();
+    var me = UserAPI.savedName();
+    if (me) {
+      var rn = myRoomName();
+      if (el.lobbyName) el.lobbyName.value = rn;
+      if (el.lobbyNameGroup) el.lobbyNameGroup.hidden = true;
+      if (el.lobbyAs) el.lobbyAs.innerHTML = '以登录身份 <b>' + esc(rn) + '</b> 加入，不用再起名字';
+    } else {
+      if (el.lobbyName) el.lobbyName.value = loadName();
+      if (el.lobbyNameGroup) el.lobbyNameGroup.hidden = false;
+      if (el.lobbyAs) el.lobbyAs.textContent = '';
+    }
     if (el.lobbyHint) {
       el.lobbyHint.textContent = RoomAPI.backend === 'mqtt'
         ? '房间码发给朋友，他们在自己手机上输码就能进来。'
@@ -713,7 +847,7 @@
       { k: 'mode', name: '玩法', opts: [['speed', '有限题·比速度'], ['timed', '限时·比总分']] },
       { k: 'rounds', name: '题目数量', opts: [[5, '5 题'], [10, '10 题'], [15, '15 题'], [20, '20 题']], show: s.mode === 'speed' },
       { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
-      { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词']] }
+      { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词'], ['singer', '猜歌手']] }
     ];
     el.roomSettings.innerHTML = '';
     defs.forEach(function (d) {
@@ -859,6 +993,14 @@
 
     el.board.hidden = false;
     el.board.innerHTML = '';
+
+    if (UserAPI.savedName() && meP) {
+      UserAPI.pushScore({
+        code: '', author: '多人对战', mode: '多人',
+        score: meP.score, right: meP.right, total: meP.answered
+      }, function () {});
+    }
+
     if (mvp) {
       var b = document.createElement('div');
       b.className = 'mvp-banner';
@@ -896,6 +1038,17 @@
 
   function refreshUserUI() {
     if (el.quizUser) el.quizUser.textContent = myUser ? ('👤 ' + myUser) : '未登录';
+    if (el.acctNick) {
+      if (myUser) {
+        el.acctNick.textContent = (myProfile && myProfile.nick) || myUser;
+        if (el.acctAv) el.acctAv.textContent = (myProfile && myProfile.avatar) || '🐱';
+        if (el.acctChip) el.acctChip.classList.add('is-on');
+      } else {
+        el.acctNick.textContent = '登录 / 注册';
+        if (el.acctAv) el.acctAv.textContent = '👤';
+        if (el.acctChip) el.acctChip.classList.remove('is-on');
+      }
+    }
   }
   function goAccount() {
     show('s-login');
@@ -917,6 +1070,87 @@
       setTimeout(function () { input.classList.remove('is-error'); }, 1500);
     }
     sfxWrong();
+  }
+
+  /* ===== 打开网站就检测登录状态 ===== */
+  function bootAuth() {
+    var me = UserAPI.savedName();
+    if (me) {
+      myUser = me;
+      refreshUserUI();
+      openModal('👋 欢迎回来',
+        '<div class="welcome-hello" id="wc-hello">欢迎回来，' + esc(me) + '</div>' +
+        '<p class="empty-tip">今天也来猜几首？</p>',
+        [
+          { label: '我的主页', cls: 'btn-ghost', fn: function () { closeModal(); goProfile(); } },
+          { label: '开始游戏', cls: 'btn-primary', fn: closeModal }
+        ]);
+      // 顺便把昵称/头像拿回来（拿不到也不影响）
+      UserAPI.getProfile(me, function (err, p) {
+        if (err || !p) return;
+        myProfile = p;
+        var h = document.getElementById('wc-hello');
+        if (h) h.textContent = '欢迎回来，' + (p.nick || p.name);
+        if (el.lobbyAs && UserAPI.savedName()) {
+          el.lobbyAs.innerHTML = '以登录身份 <b>' + esc(myRoomName()) + '</b> 加入，不用再起名字';
+        }
+      });
+      return;
+    }
+    showAuthModal();
+  }
+
+  function showAuthModal() {
+    openModal('👤 登录 / 注册',
+      '<div class="field"><label>用户名</label>' +
+      '<input type="text" id="m-acc-name" class="text-input" maxlength="12" placeholder="用户名（最多 12 个字）" autocomplete="off" /></div>' +
+      '<div class="field"><label>密码</label>' +
+      '<input type="password" id="m-acc-pwd" class="text-input" maxlength="32" placeholder="密码（至少 4 位）" autocomplete="off" /></div>' +
+      '<p class="hint" id="m-acc-hint">登录后才能加好友、私信、出题。轻量账号：密码只做简单哈希，<b>别用重要密码</b>。</p>',
+      [
+        { label: '先随便玩玩', cls: 'btn-ghost', fn: closeModal },
+        { label: '注册', cls: 'btn-multi', fn: function () { doAuth('register'); } },
+        { label: '登录', cls: 'btn-primary', fn: function () { doAuth('login'); } }
+      ]);
+    var n = document.getElementById('m-acc-name');
+    if (n) n.value = UserAPI.savedName() || '';
+  }
+
+  function doAuth(kind) {
+    var nEl = document.getElementById('m-acc-name');
+    var pEl = document.getElementById('m-acc-pwd');
+    var hEl = document.getElementById('m-acc-hint');
+    if (!nEl || !pEl) return;
+    var warn = function (msg, input) {
+      if (hEl) { hEl.textContent = '⚠️ ' + msg; hEl.classList.add('is-warn'); }
+      if (input) {
+        input.classList.add('is-error');
+        try { input.focus(); } catch (e) {}
+        setTimeout(function () { input.classList.remove('is-error'); }, 1500);
+      }
+      sfxWrong();
+    };
+    var n = (nEl.value || '').trim().slice(0, 12);
+    var p = pEl.value || '';
+    if (!n) return warn('请输入用户名', nEl);
+    if (kind === 'login' && !p) return warn('请输入密码', pEl);
+    if (kind === 'register' && p.length < 4) return warn('密码至少 4 位', pEl);
+    if (hEl) { hEl.classList.remove('is-warn'); hEl.textContent = kind === 'login' ? '登录中…' : '注册中…'; }
+    var done = function (err) {
+      if (err) return warn(err);
+      myUser = n;
+      refreshUserUI();
+      UserAPI.getProfile(n, function (e2, prof) { if (prof) myProfile = prof; });
+      openModal('✅ ' + (kind === 'login' ? '登录成功' : '注册成功'),
+        '<div class="welcome-hello">欢迎，' + esc(n) + '</div>' +
+        '<p class="empty-tip">现在可以加好友、私信、出题、多人对战了。</p>',
+        [
+          { label: '加好友', cls: 'btn-ghost', fn: function () { closeModal(); goFriends(); } },
+          { label: '开始游戏', cls: 'btn-primary', fn: closeModal }
+        ]);
+    };
+    if (kind === 'login') UserAPI.login(n, p, done);
+    else UserAPI.register(n, p, done);
   }
 
   /* ================= 出题 / 答题 ================= */
@@ -1052,8 +1286,9 @@
     var d = document.createElement('div');
     d.className = 'result-row';
     d.innerHTML = '<div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
-    d.querySelector('.rr-n').textContent = '出题人 ' + (s.author || '匿名');
-    d.querySelector('.rr-s').textContent = '答对 ' + s.right + '/' + s.total + ' · ' + timeAgo(s.at);
+    d.querySelector('.rr-n').textContent = s.author ? ('出题人 ' + s.author) : (s.mode || '对局');
+    d.querySelector('.rr-s').textContent = '答对 ' + s.right + '/' + s.total + ' · ' + timeAgo(s.at) +
+      (s.author && s.mode ? ' · ' + s.mode : '');
     d.querySelector('.rr-v').textContent = fmt(s.score);
     return d;
   }
@@ -1129,11 +1364,16 @@
           var p = profs[f.name] || {};
           var d = document.createElement('div');
           d.className = 'friend-item';
-          d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="fi-n"></div><div class="fi-s"></div></div><div class="fi-go">›</div>';
+          d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="fi-n"></div><div class="fi-s"></div></div>' +
+            '<div class="fi-actions"><button class="fi-more" title="更多">⋯</button></div>';
           d.querySelector('.av-sm').textContent = p.avatar || '👤';
           d.querySelector('.fi-n').textContent = p.nick || f.name;
-          d.querySelector('.fi-s').textContent = '@' + f.name;
-          d.addEventListener('click', function () { openFriendMenu(f.name, p); });
+          d.querySelector('.fi-s').textContent = '@' + f.name + ' · 点一下聊天';
+          d.addEventListener('click', function () { openChat(f.name, p); });
+          d.querySelector('.fi-more').addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            openFriendMenu(f.name, p);
+          });
           el.friendList.appendChild(d);
         });
       });
@@ -1223,46 +1463,163 @@
     });
   }
 
-  function openChat(name, prof) {
-    openModal('💬 ' + ((prof && prof.nick) || name),
-      '<div class="chat-box" id="chat-box"><p class="empty-tip">还没有消息</p></div>' +
-      '<div class="join-row"><input type="text" id="chat-input" class="text-input" placeholder="说点什么…" maxlength="200" />' +
-      '<button class="btn btn-primary btn-sm" id="chat-send">发送</button></div>',
-      [{ label: '关闭', cls: 'btn-ghost', fn: function () { UserAPI.watchInbox(null); closeModal(); } }]);
+  /* ================= 聊天（微信式独立界面） ================= */
+  var EMOJIS = ['😀','😄','😁','😆','😂','🤣','😊','😇','🙂','😉','😍','🥰','😘','😜','🤪','🤗',
+                '🤔','🤨','😐','😴','😢','😭','😤','😡','🥺','😱','🤯','🥳','😎','🤓','🙄','😷',
+                '👍','👎','👏','🙏','💪','🤝','✌️','🤟','👋','🎉','🔥','💯','❤️','💔','⭐','✨',
+                '🎵','🎧','🎤','🏆','👑','🍻','🍜','☕','🌙','☀️','🚀','💡','😂','🤝','🐶','🐱'];
 
-    function render(list) {
-      var box = document.getElementById('chat-box');
-      if (!box) return;
-      box.innerHTML = '';
-      if (!list.length) { box.innerHTML = '<p class="empty-tip">还没有消息</p>'; return; }
-      list.forEach(function (m) {
-        var d = document.createElement('div');
-        d.className = 'chat-msg ' + (m.from === UserAPI.savedName() ? 'me' : 'you');
-        d.innerHTML = '<div class="cm-x"></div><div class="cm-t"></div>';
-        d.querySelector('.cm-x').textContent = m.text;
-        d.querySelector('.cm-t').textContent = timeAgo(m.at);
-        box.appendChild(d);
-      });
-      box.scrollTop = box.scrollHeight;
-    }
-    function reload() { UserAPI.getDMs(name, function (e, list) { render(list); }); }
-    reload();
+  var chatPeer = null, chatProf = null, chatTick = null, chatPending = null;
+
+  function dayLabel(ts) {
+    var d = new Date(ts), n = new Date();
+    var same = function (a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); };
+    var y = new Date(n.getTime() - 86400000);
+    if (same(d, n)) return '今天';
+    if (same(d, y)) return '昨天';
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+  function hhmm(ts) {
+    var d = new Date(ts);
+    return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  function openChat(name, prof) {
+    chatPeer = name;
+    chatProf = prof || {};
+    el.chatName.textContent = chatProf.nick || name;
+    el.chatAv.textContent = chatProf.avatar || '👤';
+    el.chatText.value = '';
+    el.emojiRow.hidden = true;
+    el.btnEmoji.classList.remove('on');
+    show('s-chat');
+    renderChat([]);
+    reloadChat();
     UserAPI.watchInbox(function (topic, data) {
-      if (data && (data.from === name || data.to === name)) reload();
+      if (data && (data.from === name || data.to === name)) reloadChat();
     });
-    var send = function () {
-      var inp = document.getElementById('chat-input');
-      if (!inp) return;
-      var v = (inp.value || '').trim();
-      if (!v) return;
-      inp.value = '';
-      UserAPI.sendDM(name, v, function () { setTimeout(reload, 250); });
-    };
-    document.getElementById('chat-send').addEventListener('click', send);
-    document.getElementById('chat-input').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); send(); }
+    if (chatTick) clearInterval(chatTick);
+    chatTick = setInterval(reloadChat, 5000);
+  }
+
+  function closeChat() {
+    if (chatTick) { clearInterval(chatTick); chatTick = null; }
+    if (chatPending) { clearTimeout(chatPending); chatPending = null; }
+    UserAPI.watchInbox(null);
+    chatPeer = null;
+    show('s-friends');
+  }
+
+  /* 合并刷新：短时间内多次触发只拉一次，避免「收到消息→刷新→再订阅→再收到」来回打转 */
+  function reloadChat() {
+    if (!chatPeer || chatPending) return;
+    chatPending = setTimeout(function () {
+      chatPending = null;
+      if (!chatPeer) return;
+      UserAPI.getDMs(chatPeer, function (err, list) { if (chatPeer) renderChat(list || []); });
+    }, 250);
+  }
+
+  function renderChat(list) {
+    var box = el.chatBody;
+    if (!box) return;
+    var me = UserAPI.savedName() || '我';
+    var myAv = (myProfile && myProfile.avatar) || '👤';
+    box.innerHTML = '';
+    if (!list.length) {
+      var e = document.createElement('div');
+      e.className = 'chat-empty';
+      e.innerHTML = '还没有消息<br>打个招呼吧 👋';
+      box.appendChild(e);
+      return;
+    }
+    var lastDay = '';
+    list.forEach(function (m) {
+      var day = dayLabel(m.at);
+      if (day !== lastDay) {
+        lastDay = day;
+        var dv = document.createElement('div');
+        dv.className = 'chat-day'; dv.textContent = day;
+        box.appendChild(dv);
+      }
+      var mine = (m.from === me);
+      var row = document.createElement('div');
+      row.className = 'msg-row ' + (mine ? 'me' : 'you');
+      var av = document.createElement('div');
+      av.className = 'msg-av';
+      av.textContent = mine ? myAv : (chatProf.avatar || '👤');
+      var wrap = document.createElement('div');
+      var bub = document.createElement('div');
+      bub.className = 'msg-bub';
+      bub.textContent = m.text;
+      var meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      meta.textContent = hhmm(m.at);
+      wrap.appendChild(bub); wrap.appendChild(meta);
+      row.appendChild(av); row.appendChild(wrap);
+      box.appendChild(row);
+    });
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function renderEmojiRow() {
+    el.emojiRow.innerHTML = '';
+    EMOJIS.forEach(function (e) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = e;
+      b.addEventListener('click', function () {
+        el.chatText.value += e;
+        try { el.chatText.focus(); } catch (err) {}
+      });
+      el.emojiRow.appendChild(b);
     });
   }
+
+  function sendChat() {
+    if (!chatPeer) return;
+    var v = (el.chatText.value || '').trim();
+    if (!v) return;
+    el.chatText.value = '';
+    UserAPI.sendDM(chatPeer, v, function () { reloadChat(); });
+  }
+
+  el.btnChatBack.addEventListener('click', closeChat);
+  el.btnChatSend.addEventListener('click', sendChat);
+  el.chatText.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+  });
+  el.btnEmoji.addEventListener('click', function () {
+    var on = el.emojiRow.hidden;
+    el.emojiRow.hidden = !on;
+    el.btnEmoji.classList.toggle('on', on);
+    if (on) { renderEmojiRow(); setTimeout(function () { el.chatBody.scrollTop = el.chatBody.scrollHeight; }, 60); }
+  });
+  el.btnChatMore.addEventListener('click', function () {
+    if (!chatPeer) return;
+    var p = chatPeer;
+    var prof = chatProf;
+    openModal('@' + p,
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      '<button class="btn btn-multi" id="cm-invite">🎮 邀请 TA 对战</button>' +
+      '<button class="btn btn-ghost" id="cm-score">🏆 看 TA 的成绩</button>' +
+      '<button class="btn btn-ghost" id="cm-del">🗑 删除好友</button>' +
+      '<button class="btn btn-ghost" id="cm-block">🚫 拉黑</button>' +
+      '</div>',
+      [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
+    var g = function (id) { return document.getElementById(id); };
+    g('cm-invite').addEventListener('click', function () { closeModal(); inviteFriend(p); });
+    g('cm-score').addEventListener('click', function () { closeModal(); viewFriendScores(p, prof); });
+    g('cm-del').addEventListener('click', function () { closeModal(); UserAPI.removeFriend(p, function () { closeChat(); }); });
+    g('cm-block').addEventListener('click', function () {
+      closeModal();
+      openModal('拉黑 @' + p + '？',
+        '<p class="empty-tip">拉黑后你们不再是好友，对方也无法再向你发好友申请（除非你把他移出黑名单）。</p>',
+        [
+          { label: '取消', cls: 'btn-ghost', fn: closeModal },
+          { label: '确定拉黑', cls: 'btn-primary', fn: function () { closeModal(); UserAPI.blockUser(p, function () { closeChat(); }); } }
+        ]);
+    });
+  });
 
   function inviteFriend(name) {
     RoomAPI.create(UserAPI.savedName() || '房主', function (err, r) {
@@ -1294,6 +1651,8 @@
       el.poolTiles.forEach(function (x) { x.classList.remove('is-active'); });
       t.classList.add('is-active');
       pool = t.getAttribute('data-pool');
+      sfxTap();
+      refreshCounts();
     });
   });
   el.playTiles.forEach(function (t) {
@@ -1301,6 +1660,12 @@
       el.playTiles.forEach(function (x) { x.classList.remove('is-active'); });
       t.classList.add('is-active');
       play = t.getAttribute('data-play');
+      // 听歌猜歌手需要库里有多位歌手，「歌手专项」不适用
+      if (play === 'singer' && pool === 'artist') {
+        pool = 'zh';
+        el.poolTiles.forEach(function (x) { x.classList.toggle('is-active', x.getAttribute('data-pool') === 'zh'); });
+      }
+      refreshCounts();
     });
   });
   function toggleSwitch(node, cb) {
@@ -1355,7 +1720,7 @@
   }
 
   el.btnCreate.addEventListener('click', function () {
-    var name = (el.lobbyName.value || '').trim().slice(0, 8);
+    var name = pickName();
     if (!name) return lobbyWarn('⚠️ 请先输入你的名字', el.lobbyName);
     saveName(name);
     lobbyInfo('正在创建房间…');
@@ -1367,7 +1732,7 @@
   });
 
   el.btnJoin.addEventListener('click', function () {
-    var name = (el.lobbyName.value || '').trim().slice(0, 8);
+    var name = pickName();
     var code = (el.joinCode.value || '').trim().toUpperCase();
     if (!name) return lobbyWarn('⚠️ 请先输入你的名字', el.lobbyName);
     if (code.length !== 6) return lobbyWarn('⚠️ 房间码是 6 位', el.joinCode);
@@ -1401,6 +1766,9 @@
 
   /* ---- 账号事件 ---- */
   el.btnAccount.addEventListener('click', goProfile);
+  if (el.acctChip) el.acctChip.addEventListener('click', function () {
+    if (UserAPI.savedName()) goProfile(); else goAccount();
+  });
   el.btnFriends.addEventListener('click', goFriends);
   el.btnProfileBack.addEventListener('click', function () { show('s-start'); });
   el.btnFriendsBack.addEventListener('click', function () { show('s-start'); });
@@ -1579,7 +1947,8 @@
     if (!v.trim()) return;
     el.fillInput.disabled = true;
     el.btnSubmit.disabled = true;
-    judge(normTitle(v) === normTitle(state.current.correct.t), v);
+    var want = (play === 'singer') ? state.current.correct.a : state.current.correct.t;
+    judge(normTitle(v) === normTitle(want), v);
   }
   el.btnSubmit.addEventListener('click', submitFill);
   el.fillInput.addEventListener('keydown', function (e) {
@@ -1606,7 +1975,16 @@
 
   window.addEventListener('pagehide', function () { try { audio.pause(); } catch (e) {} });
 
+  renderArtistChips();
   refreshCounts();
   var ld = document.getElementById('loading');
   if (ld) setTimeout(function () { ld.classList.add('hide'); }, 260);
+
+  /* 打开网站就检测登录状态 */
+  myUser = UserAPI.savedName() || null;
+  refreshUserUI();
+  if (UserAPI.savedName()) {
+    UserAPI.getProfile(UserAPI.savedName(), function (err, p) { if (p) myProfile = p; });
+  }
+  setTimeout(bootAuth, 500);
 })();
