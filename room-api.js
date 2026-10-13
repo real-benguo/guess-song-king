@@ -17,7 +17,7 @@ window.RoomAPI = (function () {
 
   var DEFAULT_SETTINGS = {
     rounds: 10, play: 'sound', mode: 'speed', minutes: 3,
-    pool: 'zh', artist: '周杰伦', difficulty: 'normal', fill: 0
+    pool: 'zh', artist: '周杰伦', artists: ['周杰伦'], difficulty: 'normal', fill: 0
   };
   var MAX_EVENTS = 6;
 

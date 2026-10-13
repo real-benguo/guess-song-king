@@ -102,7 +102,18 @@
   var audio = new Audio();
   audio.preload = 'auto';
 
-  var pool = 'artist', artistSel = '周杰伦', play = 'sound', fill = false, endless = false;
+  var pool = 'artist', play = 'sound', fill = false, endless = false;
+  /* 歌手专项支持多选：artistPicks 是 { 歌手名: 1 } */
+  var artistPicks = { '周杰伦': 1 };
+  function pickedArtists() {
+    return artistStats().filter(function (x) { return artistPicks[x.name]; })
+      .map(function (x) { return x.name; });
+  }
+  function artistPoolName() {
+    var a = pickedArtists();
+    if (a.length === 1) return a[0] + '专项';
+    return '歌手专项(' + a.length + '位)';
+  }
   var POOL_NAME = { artist: '歌手专项', zh: '国语专项', yue: '粤语专项', car: '车载经典', douyin: '抖音热门' };
   var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌', singer: '听歌猜歌手' };
   var LYRIC_HIT = 5;      // 看词猜歌：直接答对
@@ -122,7 +133,9 @@
     // 粤语 / 港乐
     '刘德华', '黎明', '郭富城', '张国荣', '梅艳芳', '谭咏麟', 'Beyond', '李克勤',
     '容祖儿', '杨千嬅', '郑秀文', '陈慧琳', 'Twins', '谢霆锋', '张敬轩', '谢安琪',
-    '卫兰', '陈慧娴', '叶倩文', '林忆莲', '古巨基', '周柏豪', '许志安'
+    '卫兰', '陈慧娴', '叶倩文', '林忆莲', '古巨基', '周柏豪', '许志安',
+    // 偶像团体
+    'TFBOYS', '时代少年团'
   ];
   var HOT_SET = {};
   HOT_ARTISTS.forEach(function (a) { HOT_SET[a] = 1; });
@@ -157,7 +170,7 @@
   function hasTag(s, tag) { return !!(s.tg && s.tg.indexOf(tag) >= 0); }
 
   function poolOf(p) {
-    if (p === 'artist') return DB.filter(function (s) { return s.a === artistSel; });
+    if (p === 'artist') return DB.filter(function (s) { return artistPicks[s.a]; });
     if (p === 'yue') return DB.filter(function (s) { return s.l === 'yue'; });
     if (p === 'car') return DB.filter(function (s) { return hasTag(s, 'car'); });
     if (p === 'douyin') return DB.filter(function (s) { return hasTag(s, 'douyin'); });
@@ -775,7 +788,7 @@
     pushMyScore({
       code: state.take && takeCtx ? takeCtx.code : '',
       author: state.take && takeCtx ? (takeCtx.paper.author || '匿名')
-        : (pool === 'artist' ? artistSel + '专项' : POOL_NAME[pool]) + ' · ' + PLAY_NAME[play],
+        : (pool === 'artist' ? artistPoolName() : POOL_NAME[pool]) + ' · ' + PLAY_NAME[play],
       mode: state.take ? '答题' : (endless ? '无限' : '单机')
     });
 
@@ -854,7 +867,7 @@
       }
     }
 
-    var tags = [pool === 'artist' ? (artistSel + '专项') : POOL_NAME[pool], PLAY_NAME[play]];
+    var tags = [pool === 'artist' ? artistPoolName() : POOL_NAME[pool], PLAY_NAME[play]];
     if (fill) tags.push('填空×2');
     if (endless) tags.push('无限');
     el.badge.textContent = tags.join(' · ');
@@ -875,21 +888,64 @@
   function renderArtistChips() {
     if (!el.artistChips) return;
     var list = artistStats();
-    if (!list.some(function (x) { return x.name === artistSel; }) && list.length) artistSel = list[0].name;
+    if (!pickedArtists().length && list.length) artistPicks[list[0].name] = 1;
     el.artistChips.innerHTML = '';
-    list.forEach(function (x) {
-      var b = document.createElement('button');
-      b.className = 'artist-chip' + (x.name === artistSel ? ' on' : '');
-      b.textContent = x.name;
-      b.addEventListener('click', function () {
-        artistSel = x.name;
+
+    // 全选 / 清空
+    var bar = document.createElement('div');
+    bar.className = 'chip-tools';
+    [['全选', function () { list.forEach(function (x) { artistPicks[x.name] = 1; }); }],
+     ['清空', function () { artistPicks = {}; }]].forEach(function (pair) {
+      var tb = document.createElement('button');
+      tb.className = 'chip-tool';
+      tb.textContent = pair[0];
+      tb.addEventListener('click', function () {
+        pair[1]();
+        if (!pickedArtists().length && list.length) artistPicks[list[0].name] = 1;
         sfxTap();
         renderArtistChips();
         refreshCounts();
       });
+      bar.appendChild(tb);
+    });
+    var cnt = document.createElement('span');
+    cnt.className = 'chip-count';
+    var pk = pickedArtists();
+    cnt.textContent = '已选 ' + pk.length + ' 位：' +
+      (pk.length > 3 ? (pk.slice(0, 3).join('、') + ' 等') : pk.join('、'));
+    bar.appendChild(cnt);
+    // 工具条放在滚动区外面，滚歌手列表时不会被一起滚走
+    var oldBar = el.artistGroup ? el.artistGroup.querySelector('.chip-tools') : null;
+    if (oldBar && oldBar.parentNode) oldBar.parentNode.removeChild(oldBar);
+    if (el.artistGroup) el.artistGroup.insertBefore(bar, el.artistChips);
+    else el.artistChips.appendChild(bar);
+
+    list.forEach(function (x) {
+      var b = document.createElement('button');
+      b.className = 'artist-chip' + (artistPicks[x.name] ? ' on' : '');
+      b.textContent = x.name;
+      b.addEventListener('click', function () {
+        if (artistPicks[x.name]) delete artistPicks[x.name];
+        else artistPicks[x.name] = 1;
+        if (!pickedArtists().length) artistPicks[x.name] = 1;   // 至少留一位
+        sfxTap();
+        renderArtistChips();
+        refreshCounts();
+      });
+      if (artistPicks[x.name]) b.setAttribute('data-on', '1');
       el.artistChips.appendChild(b);
     });
+
+    // 选中的歌手可能在滚动区外，首次渲染时把它滚进可视范围
+    if (!artistChipsShown) {
+      artistChipsShown = true;
+      var firstOn = el.artistChips.querySelector('.artist-chip.on');
+      if (firstOn && firstOn.scrollIntoView) {
+        try { firstOn.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+      }
+    }
   }
+  var artistChipsShown = false;
 
   function refreshCounts() {
     var node;
@@ -898,12 +954,13 @@
     node = document.querySelector('[data-count="yue"]');
     if (node) node.textContent = poolOf('yue').length + ' 首';
     node = document.querySelector('[data-count="artist"]');
-    if (node) node.textContent = artistStats().length + ' 位歌手';
+    if (node) node.textContent = '已选 ' + pickedArtists().length + ' / ' + artistStats().length + ' 位';
     node = document.querySelector('[data-count="car"]');
     if (node) node.textContent = DB.filter(function (s) { return hasTag(s, 'car'); }).length + ' 首';
     node = document.querySelector('[data-count="douyin"]');
     if (node) node.textContent = DB.filter(function (s) { return hasTag(s, 'douyin'); }).length + ' 首';
     if (el.artistGroup) el.artistGroup.hidden = (pool !== 'artist');
+    if (pool === 'artist' && el.artistGroup && !el.artistGroup.hidden) artistChipsShown = false;
   }
 
   /* ================= 多人对战 ================= */
@@ -922,7 +979,10 @@
   function poolBySettings(st) {
     var all = DB.slice();
     if (st.pool === 'yue') all = all.filter(function (s) { return s.l === 'yue'; });
-    else if (st.pool === 'artist') all = all.filter(function (s) { return s.a === st.artist; });
+    else if (st.pool === 'artist') {
+      var names = st.artists && st.artists.length ? st.artists : (st.artist ? [st.artist] : []);
+      all = all.filter(function (s) { return names.indexOf(s.a) >= 0; });
+    }
     else if (st.pool === 'car') all = all.filter(function (s) { return hasTag(s, 'car'); });
     else if (st.pool === 'douyin') all = all.filter(function (s) { return hasTag(s, 'douyin'); });
     else all = all.filter(function (s) { return s.l !== 'yue'; });
@@ -1167,21 +1227,46 @@
       el.roomSettings.appendChild(row);
     });
 
-    // 歌手专项：列出可选的歌手
+    // 歌手专项：可多选
     if (s.pool === 'artist') {
+      var picked = (s.artists && s.artists.length) ? s.artists.slice() : (s.artist ? [s.artist] : []);
       var arow = document.createElement('div');
       arow.className = 'set-row set-row-col';
       var anm = document.createElement('span');
-      anm.className = 'set-name'; anm.textContent = '选歌手';
+      anm.className = 'set-name';
+      anm.textContent = '选歌手（已选 ' + picked.length + ' 位，可多选）';
       arow.appendChild(anm);
+
+      var bar = document.createElement('div');
+      bar.className = 'chip-tools';
+      [['全选', 'all'], ['清空', 'none']].forEach(function (pair) {
+        var tb = document.createElement('button');
+        tb.className = 'chip-tool';
+        tb.textContent = pair[0];
+        tb.disabled = !editable;
+        tb.addEventListener('click', function () {
+          var names = artistStats().map(function (x) { return x.name; });
+          patch('artists', pair[1] === 'all' ? names : ['周杰伦']);
+        });
+        bar.appendChild(tb);
+      });
+      arow.appendChild(bar);
+
       var wrap = document.createElement('div');
       wrap.className = 'artist-chips artist-chips-sm';
       artistStats().forEach(function (x) {
         var b = document.createElement('button');
-        b.className = 'artist-chip' + (x.name === s.artist ? ' on' : '');
+        var on = picked.indexOf(x.name) >= 0;
+        b.className = 'artist-chip' + (on ? ' on' : '');
         b.textContent = x.name;
         b.disabled = !editable;
-        b.addEventListener('click', function () { patch('artist', x.name); });
+        b.addEventListener('click', function () {
+          var list = picked.slice();
+          var i = list.indexOf(x.name);
+          if (i >= 0) list.splice(i, 1); else list.push(x.name);
+          if (!list.length) list = [x.name];            // 至少留一位
+          patch('artists', list);
+        });
         wrap.appendChild(b);
       });
       arow.appendChild(wrap);
@@ -1263,7 +1348,10 @@
   function updateMultiBadge() {
     var s = room.settings;
     var diff = (s.difficulty && s.difficulty !== 'normal') ? (' · ' + DIFF_NAME[s.difficulty]) : '';
-    var poolName = (s.pool === 'artist') ? (s.artist + '专项') : POOL_NAME[s.pool];
+    var poolName = (s.pool === 'artist')
+      ? ((s.artists && s.artists.length === 1) ? (s.artists[0] + '专项')
+        : ('歌手专项(' + ((s.artists && s.artists.length) || 1) + '位)'))
+      : POOL_NAME[s.pool];
     el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' + poolName + diff +
       (s.fill ? ' · 填空' : '') + ' · ' +
       (s.mode === 'speed' ? (s.rounds + ' 题') : (s.minutes + ' 分钟')) + multiLeft();
