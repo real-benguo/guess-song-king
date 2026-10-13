@@ -193,6 +193,55 @@ window.UserAPI = (function () {
     });
   }
 
+  /* 记录"今天拿了多少经验"（跨天自动归零，只用于展示） */
+  function addToday(rec, amount) {
+    var L = window.Level;
+    var day = L ? L.dayKey() : '';
+    if (!rec.expToday || rec.expToday.day !== day) rec.expToday = { day: day, amount: 0 };
+    rec.expToday.amount = Math.floor(Number(rec.expToday.amount) || 0) + amount;
+    return rec.expToday.amount;
+  }
+
+  /* 资料改动串行队列：
+     两次改动如果并行（比如连着打两局，两次加经验几乎同时发生），
+     后一次会基于前一次写回前的旧资料计算，把前一次的经验覆盖掉 —— 表现为"经验丢了"。
+     这里排队执行，保证每次都基于最新资料。 */
+  var patchQueue = [], patchBusy = false;
+
+  function patchSelf(fn, cb) {
+    patchQueue.push({ fn: fn, cb: cb });
+    runPatchQueue();
+  }
+
+  function runPatchQueue() {
+    if (patchBusy) return;
+    var item = patchQueue.shift();
+    if (!item) return;
+    patchBusy = true;
+    doPatch(item.fn, function (err, rec, out) {
+      patchBusy = false;
+      try { item.cb && item.cb(err, rec, out); } catch (e) {}
+      later(runPatchQueue);
+    });
+  }
+
+  /* 真正的「读出 -> 改动 -> 写回」 */
+  function doPatch(fn, cb) {
+    var me = savedName();
+    if (!me) return cb && cb('还没登录');
+    waitTopics(tU(me), WAIT_MS, function (err) {
+      if (err) return cb && cb(err);
+      var rec = cache[tU(me)];
+      if (!rec) return cb && cb('账号资料没读到，稍后再试');
+      var out;
+      try { out = fn(rec) || {}; } catch (e) { return cb && cb('资料更新失败'); }
+      if (!(Number(rec.exp) >= 0)) rec.exp = 0;
+      rec.updatedAt = Date.now();
+      client.publish(tU(me), JSON.stringify(rec), { qos: 1, retain: true });
+      later(function () { cb && cb(null, clone(rec), out); });
+    });
+  }
+
   /* ---------------- 对外 ---------------- */
   return {
     backend: 'mqtt',
@@ -211,7 +260,9 @@ window.UserAPI = (function () {
           if (cache[tU(name)]) return cb('这个账号名已经被注册了，换一个，或者直接登录');
           var rec = {
             name: name, nick: name, hash: hash(name + '::' + pwd),
-            avatar: '🐱', createdAt: Date.now()
+            avatar: '🐱', createdAt: Date.now(),
+            exp: 0,                                  // 经验：永不清零
+            checkin: { last: '', streak: 0 }         // 每日签到 { 上次日期, 连续天数 }
           };
           client.publish(tU(name), JSON.stringify(rec), { qos: 1, retain: true });
           saveName(name);
@@ -255,6 +306,42 @@ window.UserAPI = (function () {
         client.publish(tU(me), JSON.stringify(rec), { qos: 1, retain: true });
         later(function () { cb(null, clone(rec)); });
       });
+    },
+
+    /* ===== 经验 / 等级 / 签到 ===== */
+
+    /* 通用：读出自己的资料 -> 改动 -> 写回（保证不丢字段） */
+    patchSelf: patchSelf,
+
+    /* 加经验。amount<=0 直接返回。回调 (err, rec, {before, after, gained, reason}) */
+    addExp: function (amount, reason, cb) {
+      amount = Math.floor(Number(amount) || 0);
+      if (amount <= 0) return later(function () { cb && cb(null, null, { gained: 0 }); });
+      patchSelf(function (rec) {
+        var before = Math.floor(Number(rec.exp) || 0);
+        var after = before + amount;
+        rec.exp = after;
+        addToday(rec, amount);
+        return { before: before, after: after, gained: amount, reason: String(reason || '') };
+      }, cb);
+    },
+
+    /* 每日签到。回调 (err, rec, {already, streak, gained}) */
+    doCheckin: function (cb) {
+      var L = window.Level;
+      if (!L) return cb && cb('等级模块没加载，刷新页面试试');
+      patchSelf(function (rec) {
+        var ci = rec.checkin || { last: '', streak: 0 };
+        var s = L.nextStreak(ci);
+        if (!s) return { already: true, streak: ci.streak || 0, gained: 0 };
+        var gain = L.checkinGain(s);
+        ci.last = L.dayKey();
+        ci.streak = s;
+        rec.checkin = ci;
+        rec.exp = Math.floor(Number(rec.exp) || 0) + gain;
+        addToday(rec, gain);
+        return { already: false, streak: s, gained: gain, exp: rec.exp };
+      }, cb);
     },
 
     /* ===== 好友 ===== */

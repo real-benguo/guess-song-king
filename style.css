@@ -686,3 +686,62 @@ body{
   .tile-main{font-size:14.5px;}
   .tile-sub{font-size:11px;}
 }
+
+/* ============ 等级 / 经验 ============ */
+.acct-lv{
+  flex:0 0 auto;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800;
+  color:#1b1030;background:linear-gradient(135deg,var(--gold),#f97316);
+}
+
+.lv-card{
+  width:100%;margin:0 0 14px;padding:14px 16px;border-radius:16px;
+  background:linear-gradient(135deg,rgba(124,92,255,.20),rgba(34,211,238,.13));
+  border:1px solid rgba(124,92,255,.35);
+}
+.lv-top{display:flex;align-items:center;gap:9px;}
+.lv-badge{
+  padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:800;
+  color:#1b1030;background:linear-gradient(135deg,var(--gold),#f97316);
+}
+.lv-title{font-size:14px;font-weight:800;color:var(--txt);}
+.lv-exp{margin-left:auto;font-size:12px;color:var(--muted);font-weight:600;}
+.lv-bar{
+  margin-top:10px;height:9px;border-radius:999px;overflow:hidden;
+  background:rgba(255,255,255,.10);
+}
+.lv-fill{
+  height:100%;width:0%;border-radius:999px;transition:width .5s cubic-bezier(.2,.8,.2,1);
+  background:linear-gradient(90deg,var(--p1),var(--p2));
+}
+.lv-tip{margin:8px 0 0;font-size:11.5px;color:var(--muted);}
+
+/* 经验飘窗 */
+.exp-toast{
+  position:fixed;left:50%;top:18px;z-index:120;
+  transform:translate(-50%,-140%);opacity:0;pointer-events:none;
+  padding:9px 18px;border-radius:999px;font-size:13px;font-weight:800;
+  color:var(--txt);background:rgba(18,18,32,.94);
+  border:1px solid rgba(124,92,255,.55);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);
+  transition:transform .32s cubic-bezier(.2,.9,.2,1),opacity .32s;
+  white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis;
+}
+.exp-toast.show{transform:translate(-50%,0);opacity:1;}
+.exp-toast.is-up{
+  border-color:rgba(251,191,36,.8);
+  background:linear-gradient(135deg,rgba(251,191,36,.95),rgba(249,115,22,.92));
+  color:#241500;
+}
+
+/* ---------- 多人：排行榜上的进度 / 房间设置里的歌手行 ---------- */
+.lr-item .lr-g{
+  font-size:10.5px;color:var(--muted);font-weight:700;font-variant-numeric:tabular-nums;
+  background:rgba(255,255,255,.06);border-radius:6px;padding:1px 5px;
+}
+.lr-item.is-me .lr-g{color:#cdd3ff;}
+.set-row-col{flex-direction:column;align-items:stretch;gap:8px;}
+.set-row-col .set-name{margin-bottom:0;}
+.artist-chips-sm{max-height:150px;overflow-y:auto;padding-right:2px;}
+.artist-chips-sm .artist-chip{padding:7px 11px;font-size:12.5px;}
+.artist-chips-sm::-webkit-scrollbar{width:4px;}
+.artist-chips-sm::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:4px;}

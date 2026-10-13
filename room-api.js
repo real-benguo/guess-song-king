@@ -15,7 +15,10 @@ window.RoomAPI = (function () {
   var MAX_PLAYERS = 8;
   var STALE_MS = 25000;      // 超过这么久没心跳的玩家，房主会踢掉
 
-  var DEFAULT_SETTINGS = { rounds: 10, play: 'sound', mode: 'speed', minutes: 3 };
+  var DEFAULT_SETTINGS = {
+    rounds: 10, play: 'sound', mode: 'speed', minutes: 3,
+    pool: 'zh', artist: '周杰伦', difficulty: 'normal'
+  };
 
   var client = null;
   var myRoom = null;
@@ -293,11 +296,14 @@ window.RoomAPI = (function () {
       later(function () { cb(null, clone(myRoom)); });
     },
 
-    start: function (code, cb) {
+    /* 开始：房主把整份题目清单发下去，之后每个人按自己的节奏答题 */
+    start: function (code, songs, cb) {
       if (!isHostClient) return later(function () { cb('只有房主能开始'); });
       var s = myRoom.settings;
       myRoom.status = 'playing';
       myRoom.qIndex = 0;
+      myRoom.songs = (songs || []).slice();
+      myRoom.total = myRoom.songs.length;
       myRoom.startedAt = Date.now();
       myRoom.endsAt = s.mode === 'timed' ? Date.now() + s.minutes * 60000 : null;
       myRoom.songId = null;

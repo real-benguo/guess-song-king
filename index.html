@@ -21,6 +21,7 @@
       <button class="acct-chip" id="acct-chip">
         <span class="acct-av" id="acct-av">👤</span>
         <span class="acct-nick" id="acct-nick">未登录</span>
+        <span class="acct-lv" id="acct-lv" hidden>Lv1</span>
       </button>
     </div>
 
@@ -281,6 +282,34 @@
       <div class="pf-sub" id="pf-account">账号：—</div>
     </div>
 
+    <!-- 等级 / 经验（经验独立于得分，得分清零也不会掉） -->
+    <div class="lv-card">
+      <div class="lv-top">
+        <span class="lv-badge" id="pf-lv">Lv1</span>
+        <span class="lv-title" id="pf-lv-title">乐盲</span>
+        <span class="lv-exp" id="pf-exp">0 / 100</span>
+      </div>
+      <div class="lv-bar"><div class="lv-fill" id="pf-lv-fill"></div></div>
+      <div class="lv-tip" id="pf-lv-tip">答得越多，经验越多</div>
+    </div>
+
+    <div class="group">
+      <div class="group-label">每日签到</div>
+      <button class="btn btn-primary" id="btn-checkin">📅 签到领经验</button>
+      <p class="lv-tip" id="pf-checkin-tip">连续签到，经验越给越多</p>
+    </div>
+
+    <div class="group">
+      <div class="group-label">经验怎么来</div>
+      <p class="lv-tip" style="margin:0;line-height:1.9">
+        · 答题：得分越高、答对越多，经验越多<br />
+        · 答别人出的题：经验 ×1.5，再送 10 点<br />
+        · 多人对战：经验 ×1.2，拿第一再送 30 点<br />
+        · 每日签到：20 点起，连着签最多 50 点<br />
+        <b>经验和得分分开算 —— 清空得分记录，经验一点不掉。</b>
+      </p>
+    </div>
+
     <div class="group">
       <div class="group-label">换个头像</div>
       <div class="avatar-picker" id="pf-avatars"></div>
@@ -377,6 +406,7 @@
 
 <script src="vendor/mqtt.min.js"></script>
 <script src="data/songs.js"></script>
+<script src="level.js"></script>
 <script src="room-api.js"></script>
 <script src="user-api.js"></script>
 <script src="app.js"></script>

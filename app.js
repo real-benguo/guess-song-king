@@ -64,6 +64,11 @@
     pfAvatar: $('pf-avatar'), pfNick: $('pf-nick'), pfAccount: $('pf-account'),
     pfAvatars: $('pf-avatars'), pfNickInput: $('pf-nick-input'), btnPfNick: $('btn-pf-nick'),
     pfScCount: $('pf-sc-count'), pfScores: $('pf-scores'), btnLogout: $('btn-logout'),
+    // 等级 / 经验
+    pfLv: $('pf-lv'), pfLvTitle: $('pf-lv-title'), pfExp: $('pf-exp'),
+    pfLvFill: $('pf-lv-fill'), pfLvTip: $('pf-lv-tip'),
+    btnCheckin: $('btn-checkin'), pfCheckinTip: $('pf-checkin-tip'),
+    acctLv: $('acct-lv'),
     // 好友
     btnFriends: $('btn-friends'), frMe: $('fr-me'), btnFriendsBack: $('btn-friends-back'),
     friendTabs: $('friend-tabs'),
@@ -197,37 +202,51 @@
     el.discIco.textContent = '▶';
   }
 
-  function playClip() {
+  /* 点唱片：播放 / 暂停 / 继续 / 重播 */
+  function togglePlay() {
     if (locked || !state || !state.current) return;
-    if (el.disc.classList.contains('is-playing')) return;
-
     var song = state.current.correct;
-    try { audio.pause(); } catch (e) {}
-    audio.src = song.p;
 
-    var begin = function () {
-      var d = audio.duration || 30;
-      // 听声 / 看词 都从片段里的随机位置开始放
-      var start = Math.max(0, Math.random() * Math.max(1, d - 15));
-      try { audio.currentTime = start; } catch (e) {}
+    // 正在放 → 暂停
+    if (el.disc.classList.contains('is-playing')) {
+      try { audio.pause(); } catch (e) {}
+      el.disc.classList.remove('is-playing');
+      el.discIco.textContent = '▶';
+      el.playerTip.textContent = '⏸ 已暂停 · 再点一下继续';
+      return;
+    }
+
+    var resume = (audio.src === song.p) && audio.currentTime > 0 && !audio.ended && !audio.__done;
+
+    var start = function (fromScratch) {
+      if (fromScratch) {
+        var d = audio.duration || 30;
+        var pos = Math.max(0, Math.random() * Math.max(1, d - 15));
+        try { audio.currentTime = pos; } catch (e) {}
+      }
       var pr = audio.play();
       var ok = function () {
         if (state) state.played = true;    // 看词猜歌：听过音乐就只能拿 1 分
+        audio.__done = false;
         el.disc.classList.add('is-playing');
         el.discIco.textContent = '❚❚';
-        el.playerTip.textContent = '🎵 播放中…';
+        el.playerTip.textContent = '🎵 播放中（再点一下暂停）';
       };
       var bad = function () { el.playerTip.textContent = '播放失败，再点一次'; };
       if (pr && pr.then) pr.then(ok).catch(bad); else ok();
     };
+
     var fail = function () {
       el.playerTip.textContent = '这首加载不出来，自动跳过…';
       setTimeout(function () { if (!locked) judge(false, null); }, 700);
     };
 
-    if (audio.readyState >= 1) begin();
+    if (audio.src !== song.p) audio.src = song.p;
+
+    if (resume) { start(false); return; }          // 接着上次的位置继续
+    if (audio.readyState >= 1) start(true);
     else {
-      audio.addEventListener('loadedmetadata', begin, { once: true });
+      audio.addEventListener('loadedmetadata', function () { start(true); }, { once: true });
       audio.addEventListener('error', fail, { once: true });
       audio.load();
     }
@@ -295,10 +314,10 @@
     updateHud();
 
     if (isMulti && mState) {
-      // 多人：分数交上去，题目节奏由房主控制
-      mState.answered++;
+      // 多人：分数交给房主，题目节奏每个人自己走（不等别人）
       RoomAPI.submit(room.code, { score: gain, right: isRight ? 1 : 0 }, function () {});
-      if (isHost()) scheduleHostAdvance();
+      if (isHost()) setTimeout(hostCheckEnd, 300);
+      nextTimer = setTimeout(renderMultiQuestion, isRight ? 620 : 3000);
       return;
     }
     nextTimer = setTimeout(nextQuestion, isRight ? 620 : 3000);
@@ -330,11 +349,13 @@
   function updateHud() {
     el.hudScore.textContent = fmt(state.score);
     el.hudRight.textContent = state.right;
-    var total = state.total || TOTAL;
     var no = state.answered + 1;
-    el.hudIdx.textContent = endless
-      ? ('第 ' + no + ' 题')
-      : (Math.min(no, total) + '/' + total);
+    // total 为 0 / 空 = 不限题数（无限模式、限时对战）
+    if (endless || !state.total) {
+      el.hudIdx.textContent = '第 ' + no + ' 题';
+    } else {
+      el.hudIdx.textContent = Math.min(no, state.total) + '/' + state.total;
+    }
   }
 
   /* ---------------- 渲染 ---------------- */
@@ -349,6 +370,7 @@
     el.timerFill.classList.remove('is-low');
     state.usedSec = 0;
     state.played = false;
+    audio.__done = false;
 
     el.disc.hidden = isLyric;
     el.lyricBox.hidden = !isLyric;
@@ -485,6 +507,7 @@
       '</ul>' +
       '<h4>🎵 听声猜歌 / 听歌猜歌手 · 计分</h4>' +
       '<ul>' +
+      '<li>点唱片播放，<b>再点一下暂停</b>，再点继续（放完可以重播）</li>' +
       '<li>每题最长 30 秒，超时算答错</li>' +
       '<li>答对按用时给分 —— <span class="hl">3 秒内 5 分</span>、8 秒内 3 分、15 秒内 1 分、更久 0.5 分</li>' +
       '</ul>' +
@@ -508,7 +531,9 @@
       '<h4>🎮 多人对战</h4>' +
       '<ul>' +
       '<li>房主建房，把 6 位房间码发给朋友，输码进来</li>' +
-      '<li>只有房主能改设置：玩法（有限题·比速度 / 限时·比总分）、题目数量、时长、题目类型</li>' +
+      '<li>只有房主能改设置：玩法、题目数量 / 时长、题目类型、<b>曲库（含歌手专项）</b>、<b>难度</b></li>' +
+      '<li><b>难度</b>：简单只出很热门的歌，普通放宽一档，困难全部歌曲都出</li>' +
+      '<li><b>各答各的</b>：每个人按自己的节奏答题，不用等别人；答完 / 时间到会显示「等其他人」</li>' +
       '<li>登录后自动用你的昵称，不用再起名字</li>' +
       '<li>结束后按分数排名，第一名是 MVP</li>' +
       '</ul>' +
@@ -542,7 +567,8 @@
       groups[k].last = r.s;
       if (r.s > groups[k].best) groups[k].best = r.s;
     });
-    var html = '<p style="margin:0 0 12px;color:#8b8fa3;font-size:12.5px">' + todayKey() + ' · 共 ' + arr.length + ' 局</p>';
+    var html = '<p style="margin:0 0 12px;color:#8b8fa3;font-size:12.5px">' + todayKey() + ' · 共 ' + arr.length +
+      ' 局</p><p class="lv-tip" style="margin:-6px 0 12px">清空只清今天的分数记录，<b>经验不会掉</b>。</p>';
     Object.keys(groups).forEach(function (k) {
       var parts = k.split('|');
       var g = groups[k];
@@ -609,6 +635,11 @@
       mode: state.take ? '答题' : (endless ? '无限' : '单机')
     });
 
+    // 经验：与得分正相关，但独立保存 —— 之后清空得分记录也不会掉经验
+    grantExp(state.take ? 'take' : 'solo', {
+      score: state.score, right: state.right, total: state.answered
+    });
+
     el.rank.textContent = r;
     var isBest = false;
     try {
@@ -661,7 +692,8 @@
       usedSec: 0,
       tStart: 0,
       current: null,
-      over: false
+      over: false,
+      total: TOTAL
     };
     el.hudScore.textContent = '0';
     el.hudRight.textContent = '0';
@@ -737,9 +769,30 @@
     for (var i = 0; i < DB.length; i++) if ((DB[i].a + '|' + DB[i].t) === key) return DB[i];
     return null;
   }
-  function poolForPlay(p) {
+  var DIFF_NAME = { easy: '简单', normal: '普通', hard: '困难' };
+
+  /* 按房间设置挑题库：曲库 × 难度 × 玩法 */
+  function poolBySettings(st) {
     var all = DB.slice();
-    if (p === 'lyric') all = all.filter(function (s) { return s.ly && s.ly.length > 40; });
+    if (st.pool === 'yue') all = all.filter(function (s) { return s.l === 'yue'; });
+    else if (st.pool === 'artist') all = all.filter(function (s) { return s.a === st.artist; });
+    else all = all.filter(function (s) { return s.l !== 'yue'; });
+
+    // 难度越低，只留越热门的歌（pop 3=热门 / 2=中等 / 1=冷门）
+    var need = st.difficulty === 'easy' ? 3 : (st.difficulty === 'normal' ? 2 : 1);
+    if (need > 1) {
+      var f = all.filter(function (s) { return (s.pop || 3) >= need; });
+      if (f.length >= 20) all = f;
+    }
+    if (st.play === 'lyric') {
+      var fl = all.filter(function (s) { return s.ly && s.ly.length > 40; });
+      if (fl.length >= 10) all = fl;
+    }
+    if (st.play === 'singer') {
+      var arts = {};
+      all.forEach(function (s) { arts[s.a] = 1; });
+      if (Object.keys(arts).length < 4) all = DB.filter(function (s) { return s.l !== 'yue'; });
+    }
     return all;
   }
   function uniqByTitle(pool) {
@@ -805,7 +858,13 @@
       if (isActive('s-room')) renderRoom();
       if (isActive('s-game') && isMulti) {
         updateLiveRank();
-        if (room.songId && (!mState || room.songId !== mState.songId)) showMultiQuestion(room.songId);
+        updateMultiBadge();
+        if (isHost()) hostCheckEnd();
+        // 时间到 / 已经答完 → 停手等人
+        var s = room.settings;
+        if (s.mode === 'timed' && room.endsAt && Date.now() >= room.endsAt && !locked) {
+          multiWaiting('⏰ 时间到，等其他人…');
+        }
       }
     });
   }
@@ -847,9 +906,20 @@
       { k: 'mode', name: '玩法', opts: [['speed', '有限题·比速度'], ['timed', '限时·比总分']] },
       { k: 'rounds', name: '题目数量', opts: [[5, '5 题'], [10, '10 题'], [15, '15 题'], [20, '20 题']], show: s.mode === 'speed' },
       { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
-      { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词'], ['singer', '猜歌手']] }
+      { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词'], ['singer', '猜歌手']] },
+      { k: 'pool', name: '曲库', opts: [['zh', '国语'], ['yue', '粤语'], ['artist', '歌手专项']] },
+      { k: 'difficulty', name: '难度', opts: [['easy', '简单'], ['normal', '普通'], ['hard', '困难']] }
     ];
     el.roomSettings.innerHTML = '';
+
+    var patch = function (k, v) {
+      var p = {}; p[k] = v;
+      RoomAPI.updateSettings(room.code, p, function (err, r) {
+        if (err) { alert(err); return; }
+        room = r; renderRoom();
+      });
+    };
+
     defs.forEach(function (d) {
       if (d.show === false) return;
       var row = document.createElement('div');
@@ -865,8 +935,10 @@
         if (String(s[d.k]) === String(o[0])) b.className = 'on';
         b.disabled = !editable;
         b.addEventListener('click', function () {
-          var patch = {}; patch[d.k] = o[0];
-          RoomAPI.updateSettings(room.code, patch, function (err, r) {
+          var p = {}; p[d.k] = o[0];
+          // 猜歌手必须有多位歌手，「歌手专项」不适用
+          if (d.k === 'play' && o[0] === 'singer' && s.pool === 'artist') p.pool = 'zh';
+          RoomAPI.updateSettings(room.code, p, function (err, r) {
             if (err) { alert(err); return; }
             room = r; renderRoom();
           });
@@ -876,6 +948,35 @@
       row.appendChild(seg);
       el.roomSettings.appendChild(row);
     });
+
+    // 歌手专项：列出可选的歌手
+    if (s.pool === 'artist') {
+      var arow = document.createElement('div');
+      arow.className = 'set-row set-row-col';
+      var anm = document.createElement('span');
+      anm.className = 'set-name'; anm.textContent = '选歌手';
+      arow.appendChild(anm);
+      var wrap = document.createElement('div');
+      wrap.className = 'artist-chips artist-chips-sm';
+      artistStats().forEach(function (x) {
+        var b = document.createElement('button');
+        b.className = 'artist-chip' + (x.name === s.artist ? ' on' : '');
+        b.innerHTML = '<span class="ac-t"></span><span class="ac-n"></span>';
+        b.querySelector('.ac-t').textContent = x.name;
+        b.querySelector('.ac-n').textContent = x.n;
+        b.disabled = !editable;
+        b.addEventListener('click', function () { patch('artist', x.name); });
+        wrap.appendChild(b);
+      });
+      arow.appendChild(wrap);
+      el.roomSettings.appendChild(arow);
+    }
+
+    // 提示当前设置的题库规模
+    var tip = document.createElement('p');
+    tip.className = 'hint';
+    tip.textContent = '当前题库：' + poolBySettings(s).length + ' 首可选';
+    el.roomSettings.appendChild(tip);
   }
 
   function renameSelf() {
@@ -897,74 +998,123 @@
       ]);
   }
 
-  /* ---- 多人游戏 ---- */
+  /* ---- 多人游戏 ----
+     模型：房主开局时把整份题目清单发到房间状态里，之后每个人按自己的节奏答题，
+     互不等待；房主只负责判定「整局什么时候结束」。 */
   function startMultiGame() {
     var s = room.settings;
     play = s.play;   // 多人时题目类型跟随房间设置，而不是首页的选择
-    var pool = uniqByTitle(shuffle(poolForPlay(s.play)));
-    if (pool.length < 4) { alert('这个玩法的题库不够'); return; }
+    var list = uniqByTitle(shuffle(poolBySettings(s)));
+    if (list.length < 4) {
+      alert('这个设置的题库不够（' + POOL_NAME[s.pool] + ' · ' + DIFF_NAME[s.difficulty] +
+        '），让房主换个曲库或难度');
+      return;
+    }
 
-    mState = { songId: null, pool: pool, cursor: 0, answered: 0, over: false };
+    // 题目清单：优先用房主发下来的（保证每个人题目一致）
+    var keys = (room.songs && room.songs.length) ? room.songs.slice() : [];
+    if (!keys.length) {
+      var need = (s.mode === 'speed') ? s.rounds : Math.min(list.length, 40);
+      keys = list.slice(0, need).map(function (x) { return x.a + '|' + x.t; });
+    }
+
+    mState = { idx: 0, over: false, songs: keys };
     state = {
-      allPool: pool, queue: [], used: {}, answered: 0, score: 0, right: 0,
-      usedSec: 0, tStart: 0, current: null, over: false
+      allPool: list, queue: [], used: {}, answered: 0, score: 0, right: 0,
+      usedSec: 0, tStart: 0, current: null, over: false,
+      total: (s.mode === 'speed') ? s.rounds : 0     // 0 = 不限题数（限时模式）
     };
     el.hudScore.textContent = '0';
     el.hudRight.textContent = '0';
     el.dots.innerHTML = '';
     el.dots.hidden = true;
     el.liveRank.hidden = false;
-    el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' +
-      (s.mode === 'speed' ? (s.rounds + ' 题') : (s.minutes + ' 分钟'));
     show('s-game');
-    if (isHost()) hostPushNext();
+    updateMultiBadge();
     updateLiveRank();
+    renderMultiQuestion();
   }
 
-  function hostPushNext() {
-    if (!isHost() || !mState || mState.over) return;
+  function multiLeft() {
+    if (!room || !room.endsAt) return '';
+    var left = Math.max(0, room.endsAt - Date.now());
+    var m = Math.floor(left / 60000), sec = Math.floor(left % 60000 / 1000);
+    return ' · 剩 ' + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  function updateMultiBadge() {
     var s = room.settings;
-    if (s.mode === 'speed' && mState.cursor >= s.rounds) return RoomAPI.finish(room.code, function () {});
-    if (s.mode === 'timed' && room.endsAt && Date.now() > room.endsAt) return RoomAPI.finish(room.code, function () {});
-    if (mState.cursor >= mState.pool.length) return RoomAPI.finish(room.code, function () {});
-    var song = mState.pool[mState.cursor++];
-    RoomAPI.setSong(room.code, song.a + '|' + song.t, function () {});
+    var diff = (s.difficulty && s.difficulty !== 'normal') ? (' · ' + DIFF_NAME[s.difficulty]) : '';
+    var poolName = (s.pool === 'artist') ? (s.artist + '专项') : POOL_NAME[s.pool];
+    el.badge.textContent = '多人 · ' + PLAY_NAME[s.play] + ' · ' + poolName + diff + ' · ' +
+      (s.mode === 'speed' ? (s.rounds + ' 题') : (s.minutes + ' 分钟')) + multiLeft();
   }
 
-  /* 房主：等所有人答完（最多 9 秒）再推下一题 */
-  function scheduleHostAdvance() {
-    if (hostAdvTimer) { clearTimeout(hostAdvTimer); hostAdvTimer = null; }
-    var t0 = Date.now();
-    var tick = function () {
-      if (!isHost() || !mState || mState.over || !isActive('s-game')) return;
-      var idx = mState.cursor - 1;
-      var allDone = room.players.every(function (p) { return p.answered > idx; });
-      if (allDone || Date.now() - t0 > 9000) { hostPushNext(); return; }
-      hostAdvTimer = setTimeout(tick, 500);
-    };
-    hostAdvTimer = setTimeout(tick, 900);
+  /* 答完了 / 时间到 → 停手等别人 */
+  function multiWaiting(msg) {
+    locked = true;
+    stopTimer(); stopAudio();
+    if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+    el.options.innerHTML = '';
+    el.options.hidden = true;
+    el.fillArea.hidden = true;
+    el.lyricBox.hidden = true;
+    el.disc.hidden = true;
+    el.timerFill.style.width = '100%';
+    if (el.timer) el.timer.classList.add('is-off');
+    el.playerTip.textContent = msg || '✅ 你答完了，等其他人…';
+    if (isHost()) hostCheckEnd();
   }
 
-  function showMultiQuestion(key) {
-    var song = findSong(key);
-    if (!song || !mState) return;
-    mState.songId = key;
-    var q = makeQuestion(song);
-    if (!q) { if (isHost()) hostPushNext(); return; }
+  /* 渲染「我自己的」下一题 */
+  function renderMultiQuestion() {
+    if (!mState || !state || state.over || !room) return;
+    var s = room.settings;
+    if (s.mode === 'speed' && mState.idx >= s.rounds) return multiWaiting();
+    if (s.mode === 'timed' && room.endsAt && Date.now() >= room.endsAt) return multiWaiting('⏰ 时间到，等其他人…');
+    if (mState.idx >= mState.songs.length) return multiWaiting();
+
+    var guard = 0, q = null;
+    while (guard++ < 200 && mState.idx < mState.songs.length) {
+      var song = findSong(mState.songs[mState.idx++]);
+      if (!song) continue;
+      q = makeQuestion(song);
+      if (q) break;
+    }
+    if (!q) return multiWaiting();
+
     state.current = q;
     renderQuestion();
+    updateMultiBadge();
+  }
+
+  /* 房主：判断整局该不该结束 */
+  function hostCheckEnd() {
+    if (!isHost() || !room || room.status !== 'playing') return;
+    var s = room.settings, over = false;
+    if (s.mode === 'speed') {
+      over = room.players.every(function (p) { return (p.answered || 0) >= s.rounds; });
+      // 兜底：有人一直不答，别把整局卡死
+      if (!over && room.startedAt && Date.now() - room.startedAt > (s.rounds * 30 + 120) * 1000) over = true;
+    } else {
+      over = !!(room.endsAt && Date.now() >= room.endsAt);
+    }
+    if (over) RoomAPI.finish(room.code, function () {});
   }
 
   function updateLiveRank() {
     if (!room || !el.liveRank) return;
+    var s = room.settings;
     var list = room.players.slice().sort(function (a, b) { return b.score - a.score; });
     el.liveRank.innerHTML = '';
     list.forEach(function (p) {
       var d = document.createElement('div');
       d.className = 'lr-item' + (p.id === RoomAPI.myId() ? ' is-me' : '');
       var n = document.createElement('span'); n.className = 'lr-n'; n.textContent = p.name;
-      var s = document.createElement('span'); s.className = 'lr-s'; s.textContent = fmt(p.score);
-      d.appendChild(n); d.appendChild(s);
+      var g = document.createElement('span'); g.className = 'lr-g';
+      g.textContent = (p.answered || 0) + (s.mode === 'speed' ? '/' + s.rounds : '');
+      var sc = document.createElement('span'); sc.className = 'lr-s'; sc.textContent = fmt(p.score);
+      d.appendChild(n); d.appendChild(g); d.appendChild(sc);
       el.liveRank.appendChild(d);
     });
   }
@@ -999,6 +1149,11 @@
         code: '', author: '多人对战', mode: '多人',
         score: meP.score, right: meP.right, total: meP.answered
       }, function () {});
+      // 对战经验：按得分给，第一名再多给一份
+      grantExp('multi', {
+        score: meP.score, right: meP.right, total: meP.answered,
+        mvp: !!(mvp && mvp.id === RoomAPI.myId())
+      });
     }
 
     if (mvp) {
@@ -1049,6 +1204,10 @@
         if (el.acctChip) el.acctChip.classList.remove('is-on');
       }
     }
+    if (el.acctLv) {
+      if (myProfile) { el.acctLv.hidden = false; el.acctLv.textContent = 'Lv' + lvInfo(myProfile).level; }
+      else el.acctLv.hidden = true;
+    }
   }
   function goAccount() {
     show('s-login');
@@ -1089,6 +1248,7 @@
       UserAPI.getProfile(me, function (err, p) {
         if (err || !p) return;
         myProfile = p;
+        renderLevelCard();
         var h = document.getElementById('wc-hello');
         if (h) h.textContent = '欢迎回来，' + (p.nick || p.name);
         if (el.lobbyAs && UserAPI.savedName()) {
@@ -1140,7 +1300,7 @@
       if (err) return warn(err);
       myUser = n;
       refreshUserUI();
-      UserAPI.getProfile(n, function (e2, prof) { if (prof) myProfile = prof; });
+      UserAPI.getProfile(n, function (e2, prof) { if (prof) { myProfile = prof; renderLevelCard(); } });
       openModal('✅ ' + (kind === 'login' ? '登录成功' : '注册成功'),
         '<div class="welcome-hello">欢迎，' + esc(n) + '</div>' +
         '<p class="empty-tip">现在可以加好友、私信、出题、多人对战了。</p>',
@@ -1324,6 +1484,7 @@
       });
       el.pfAvatars.appendChild(b);
     });
+    renderLevelCard();
   }
 
   function renderProfileScores(list) {
@@ -1337,6 +1498,121 @@
       return;
     }
     list.slice().reverse().forEach(function (s) { el.pfScores.appendChild(scoreRow(s)); });
+  }
+
+  /* ================= 等级 / 经验 =================
+     经验(exp) 独立于 得分(score)：
+       · 得分可以一键清零，经验永远不会清零
+       · 经验的多少与得分正相关（得分越高、答对越多，经验越多）
+       · 来源：答题 / 答别人出的题 / 多人对战 / 每日签到
+  ================================================= */
+  function lvInfo(rec) {
+    var L = window.Level;
+    if (!L) return { level: 1, cur: 0, need: 100, pct: 0, title: '', exp: 0 };
+    return L.fromExp(rec ? rec.exp : 0);
+  }
+
+  /* 顶部小提示条（不打断游戏流程） */
+  var toastTimer = null;
+  function expToast(html, isUp) {
+    var t = document.getElementById('exp-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'exp-toast';
+      t.className = 'exp-toast';
+      document.body.appendChild(t);
+    }
+    t.innerHTML = html;
+    t.className = 'exp-toast show' + (isUp ? ' is-up' : '');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { if (t) t.className = 'exp-toast'; }, 2800);
+  }
+
+  /* 刷新等级卡片 + 首页等级角标 + 签到按钮 */
+  function renderLevelCard() {
+    var i = lvInfo(myProfile);
+    if (el.pfLv) el.pfLv.textContent = 'Lv' + i.level;
+    if (el.pfLvTitle) el.pfLvTitle.textContent = i.title;
+    if (el.pfExp) el.pfExp.textContent = i.cur + ' / ' + i.need + '（累计 ' + i.exp + '）';
+    if (el.pfLvFill) el.pfLvFill.style.width = i.pct + '%';
+    var todayExp = (myProfile && myProfile.expToday && window.Level &&
+                    myProfile.expToday.day === window.Level.dayKey()) ? myProfile.expToday.amount : 0;
+    if (el.pfLvTip) {
+      el.pfLvTip.textContent = '再得 ' + Math.max(0, i.need - i.cur) + ' 点经验升到 Lv' + (i.level + 1) +
+        (todayExp ? ' · 今天已得 ' + todayExp + ' 点' : '');
+    }
+    if (el.acctLv) {
+      el.acctLv.hidden = !myProfile;
+      if (myProfile) el.acctLv.textContent = 'Lv' + i.level;
+    }
+    if (el.btnCheckin && el.pfCheckinTip && window.Level) {
+      var ci = (myProfile && myProfile.checkin) || { last: '', streak: 0 };
+      var streak = window.Level.nextStreak(ci);
+      if (streak === 0) {
+        el.btnCheckin.disabled = true;
+        el.btnCheckin.textContent = '✅ 今天已签到';
+        el.pfCheckinTip.textContent = '已连续签到 ' + (ci.streak || 0) + ' 天，明天再来';
+      } else {
+        el.btnCheckin.disabled = false;
+        el.btnCheckin.textContent = '📅 签到 +' + window.Level.checkinGain(streak) + ' 经验';
+        el.pfCheckinTip.textContent = (ci.streak ? ('已连续 ' + ci.streak + ' 天，今天是第 ' + streak + ' 天')
+                                                : '每天一次，连着签经验更多');
+      }
+    }
+  }
+
+  /* 发经验。kind: 'solo' | 'take' | 'multi' */
+  function grantExp(kind, o, done) {
+    o = o || {};
+    if (!UserAPI.savedName() || !window.Level) return done && done(null);
+    var gain = window.Level.gainFrom({
+      kind: kind, score: o.score, right: o.right, total: o.total, mvp: !!o.mvp
+    });
+    UserAPI.addExp(gain, kind, function (err, rec, out) {
+      if (err || !rec) return done && done(err);
+      myProfile = rec;
+      var lvBefore = (out && typeof out.before === 'number') ? lvInfo({ exp: out.before }).level : null;
+      var lvAfter = lvInfo(rec).level;
+      renderLevelCard();
+      if (lvBefore !== null && lvAfter > lvBefore) {
+        confetti();
+        expToast('🎉 升级！<b>Lv' + lvAfter + '</b> ' + lvInfo(rec).title, true);
+        sfxRight();
+      } else {
+        expToast('✨ 经验 +' + gain);
+      }
+      done && done(null, out);
+    });
+  }
+
+  /* 每日签到 */
+  function doCheckin() {
+    if (!UserAPI.savedName()) { goAccount(); return; }
+    if (!el.btnCheckin) return;
+    var lvBefore = lvInfo(myProfile).level;
+    el.btnCheckin.disabled = true;
+    UserAPI.doCheckin(function (err, rec, out) {
+      if (err) {
+        el.btnCheckin.disabled = false;
+        alert(err);
+        return;
+      }
+      if (!rec) { el.btnCheckin.disabled = false; return; }
+      myProfile = rec;
+      renderLevelCard();
+      if (out && out.already) {
+        expToast('今天已经签到过了，明天再来～');
+        return;
+      }
+      var lvAfter = lvInfo(rec).level;
+      if (lvAfter > lvBefore) {
+        confetti();
+        expToast('📅 签到 +' + out.gained + ' 经验 · 🎉 升级 <b>Lv' + lvAfter + '</b>', true);
+      } else {
+        expToast('📅 签到成功 · 连续 ' + out.streak + ' 天 · 经验 +' + out.gained);
+      }
+      sfxRight();
+    });
   }
 
   /* ================= 好友 ================= */
@@ -1360,6 +1636,10 @@
       }
       UserAPI.getProfiles(list.map(function (x) { return x.name; }), function (e2, profs) {
         el.friendList.innerHTML = '';
+        // 等级高的排前面
+        list = list.slice().sort(function (a, b) {
+          return (((profs[b.name] || {}).exp) || 0) - (((profs[a.name] || {}).exp) || 0);
+        });
         list.forEach(function (f) {
           var p = profs[f.name] || {};
           var d = document.createElement('div');
@@ -1368,7 +1648,8 @@
             '<div class="fi-actions"><button class="fi-more" title="更多">⋯</button></div>';
           d.querySelector('.av-sm').textContent = p.avatar || '👤';
           d.querySelector('.fi-n').textContent = p.nick || f.name;
-          d.querySelector('.fi-s').textContent = '@' + f.name + ' · 点一下聊天';
+          var flv = lvInfo(p);
+          d.querySelector('.fi-s').textContent = 'Lv' + flv.level + ' ' + flv.title + ' · @' + f.name;
           d.addEventListener('click', function () { openChat(f.name, p); });
           d.querySelector('.fi-more').addEventListener('click', function (ev) {
             ev.stopPropagation();
@@ -1487,7 +1768,9 @@
   function openChat(name, prof) {
     chatPeer = name;
     chatProf = prof || {};
-    el.chatName.textContent = chatProf.nick || name;
+    var clv = lvInfo(chatProf);
+    el.chatName.textContent = (chatProf.nick || name) +
+      (chatProf && chatProf.exp !== undefined ? ' · Lv' + clv.level : '');
     el.chatAv.textContent = chatProf.avatar || '👤';
     el.chatText.value = '';
     el.emojiRow.hidden = true;
@@ -1635,7 +1918,11 @@
   function viewFriendScores(name, prof) {
     UserAPI.getScores(name, function (err, list) {
       list = list || [];
-      openModal('🏆 ' + ((prof && prof.nick) || name) + ' 的成绩',
+      var lv = lvInfo(prof);
+      openModal('🏆 ' + ((prof && prof.nick) || name) + (prof && prof.exp !== undefined ? ' · Lv' + lv.level : ''),
+        '<p class="lv-tip" style="margin:-4px 0 10px">' + (prof && prof.exp !== undefined
+          ? ('等级 Lv' + lv.level + ' · ' + lv.title + ' · 累计经验 ' + lv.exp)
+          : 'TA 还没登录过') + '</p>' +
         '<div class="results" id="fs-list"></div>',
         [{ label: '关闭', cls: 'btn-ghost', fn: closeModal }]);
       var box = document.getElementById('fs-list');
@@ -1687,8 +1974,14 @@
     if (room) { leaveRoom(); return; }
     show('s-start');
   });
-  el.disc.addEventListener('click', playClip);
-  el.btnListen.addEventListener('click', playClip);
+  el.disc.addEventListener('click', togglePlay);
+  audio.addEventListener('ended', function () {
+    audio.__done = true;
+    el.disc.classList.remove('is-playing');
+    el.discIco.textContent = '▶';
+    if (!locked && state && state.current) el.playerTip.textContent = '播放完了 · 点唱片重播';
+  });
+  el.btnListen.addEventListener('click', togglePlay);
   el.btnRules.addEventListener('click', function () { openModal('📖 规则说明', rulesHTML()); });
   el.btnScores.addEventListener('click', showScores);
   el.modalClose.addEventListener('click', closeModal);
@@ -1754,7 +2047,16 @@
 
   el.btnRoomStart.addEventListener('click', function () {
     if (!isHost()) return;
-    RoomAPI.start(room.code, function (err) { if (err) alert(err); });
+    var s = room.settings;
+    var list = uniqByTitle(shuffle(poolBySettings(s)));
+    if (list.length < 4) {
+      alert('这个设置的题库不够（' + POOL_NAME[s.pool] + ' · ' + DIFF_NAME[s.difficulty] +
+        '），换个曲库或难度再开始');
+      return;
+    }
+    var need = (s.mode === 'speed') ? s.rounds : Math.min(list.length, 40);
+    var keys = list.slice(0, need).map(function (x) { return x.a + '|' + x.t; });
+    RoomAPI.start(room.code, keys, function (err) { if (err) alert(err); });
   });
 
   el.btnRoomLeave.addEventListener('click', function () {
@@ -1773,7 +2075,7 @@
   el.btnProfileBack.addEventListener('click', function () { show('s-start'); });
   el.btnFriendsBack.addEventListener('click', function () { show('s-start'); });
   el.btnLogout.addEventListener('click', function () {
-    UserAPI.loggedOut(); myUser = null; refreshUserUI(); show('s-start');
+    UserAPI.loggedOut(); myUser = null; myProfile = null; refreshUserUI(); show('s-start');
   });
   el.btnPfNick.addEventListener('click', function () {
     var v = (el.pfNickInput.value || '').trim().slice(0, 12);
@@ -1788,6 +2090,7 @@
       myProfile = rec; renderProfile();
     });
   });
+  if (el.btnCheckin) el.btnCheckin.addEventListener('click', doCheckin);
   el.friendTabs.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button') : null;
     if (!b) return;
@@ -1820,7 +2123,8 @@
       d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="fi-n"></div><div class="fi-s"></div></div>';
       d.querySelector('.av-sm').textContent = p.avatar || '👤';
       d.querySelector('.fi-n').textContent = p.nick || p.name;
-      d.querySelector('.fi-s').textContent = '@' + p.name;
+      var slv = lvInfo(p);
+      d.querySelector('.fi-s').textContent = 'Lv' + slv.level + ' ' + slv.title + ' · @' + p.name;
       var add = document.createElement('button');
       add.className = 'btn btn-primary btn-sm';
       add.textContent = '加好友';
@@ -1846,6 +2150,7 @@
       el.btnLogin.disabled = false;
       if (err) return accWarn(err);
       myUser = n; refreshUserUI();
+      UserAPI.getProfile(n, function (e2, prof) { if (prof) { myProfile = prof; renderLevelCard(); } });
       openModal('登录成功', '<p class="empty-tip">欢迎回来，「' + n + '」</p>');
     });
   });
@@ -1859,6 +2164,7 @@
       el.btnRegister.disabled = false;
       if (err) return accWarn(err);
       myUser = n; refreshUserUI();
+      UserAPI.getProfile(n, function (e2, prof) { if (prof) { myProfile = prof; renderLevelCard(); } });
       openModal('注册成功', '<p class="empty-tip">已登录为「' + n + '」</p>');
     });
   });
