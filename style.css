@@ -659,10 +659,18 @@ body{
 .btn-multi{box-shadow:0 10px 26px -14px rgba(34,211,238,.8);}
 
 /* 弹窗：按钮等宽、圆角更柔、顶部高光 */
-.modal-card{position:relative;overflow:hidden;}
+/* 注意：这里千万别加 overflow:hidden —— 会把上面的 overflow-y:auto 覆盖掉，
+   规则说明那种长内容就再也滑不动了。高光改用左右缩进，不靠裁剪。 */
+.modal-card{position:relative;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
 .modal-card::before{
-  content:'';position:absolute;left:0;right:0;top:0;height:1px;
+  content:'';position:absolute;left:20px;right:20px;top:0;height:1px;pointer-events:none;
   background:linear-gradient(90deg,transparent,rgba(124,92,255,.75),rgba(34,211,238,.6),transparent);
+}
+/* 长弹窗（规则说明）的按钮吸在底部，不用滚到底才能关 */
+.modal-actions{
+  position:sticky;bottom:-22px;z-index:3;
+  background:linear-gradient(180deg,rgba(16,16,32,0),#101020 42%);
+  padding:16px 0 4px;margin-top:10px;
 }
 .modal-actions .btn{flex:1;margin-top:0;}
 

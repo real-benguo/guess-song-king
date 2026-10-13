@@ -103,7 +103,7 @@
   audio.preload = 'auto';
 
   var pool = 'artist', artistSel = '周杰伦', play = 'sound', fill = false, endless = false;
-  var POOL_NAME = { artist: '歌手专项', zh: '国语专项', yue: '粤语专项' };
+  var POOL_NAME = { artist: '歌手专项', zh: '国语专项', yue: '粤语专项', car: '车载经典', douyin: '抖音热门' };
   var PLAY_NAME = { sound: '听声猜歌', lyric: '看词猜歌', singer: '听歌猜歌手' };
   var LYRIC_HIT = 5;      // 看词猜歌：直接答对
   var LYRIC_PLAYED = 1;   // 看词猜歌：听了音乐才答对
@@ -153,9 +153,14 @@
   }
   function fmt(n) { return (n % 1 === 0) ? String(n) : n.toFixed(1); }
 
+  /* 专题标签：s.tg 形如 'car' / 'douyin' / 'car,douyin' */
+  function hasTag(s, tag) { return !!(s.tg && s.tg.indexOf(tag) >= 0); }
+
   function poolOf(p) {
     if (p === 'artist') return DB.filter(function (s) { return s.a === artistSel; });
     if (p === 'yue') return DB.filter(function (s) { return s.l === 'yue'; });
+    if (p === 'car') return DB.filter(function (s) { return hasTag(s, 'car'); });
+    if (p === 'douyin') return DB.filter(function (s) { return hasTag(s, 'douyin'); });
     return DB.filter(function (s) { return s.l !== 'yue'; });
   }
   function gamePool() {
@@ -376,6 +381,16 @@
 
     locked = true;
     state.answered++;
+
+    // 答题模式：记下这题的作答明细，出题人那边能看到「你答了什么 / 正确答案是什么」
+    if (state.take && state.detail && state.detail.length < 60) {
+      state.detail.push({
+        k: q.correct.a + '|' + q.correct.t,
+        ok: isRight ? 1 : 0,
+        p: String(userText == null ? '' : userText).slice(0, 30),
+        s: Math.round(state.usedSec || 0)
+      });
+    }
 
     var wrongTip = '';
     var gain = 0;
@@ -752,7 +767,8 @@
         player: myUser || ('游客' + String(UserAPI.myPid()).slice(-4)),
         score: state.score,
         right: state.right,
-        total: state.answered
+        total: state.answered,
+        detail: (state.detail || []).slice(0, 60)
       }, function () {});
     }
     // 每一局都记一份成绩，好友那边才看得到
@@ -883,6 +899,10 @@
     if (node) node.textContent = poolOf('yue').length + ' 首';
     node = document.querySelector('[data-count="artist"]');
     if (node) node.textContent = artistStats().length + ' 位歌手';
+    node = document.querySelector('[data-count="car"]');
+    if (node) node.textContent = DB.filter(function (s) { return hasTag(s, 'car'); }).length + ' 首';
+    node = document.querySelector('[data-count="douyin"]');
+    if (node) node.textContent = DB.filter(function (s) { return hasTag(s, 'douyin'); }).length + ' 首';
     if (el.artistGroup) el.artistGroup.hidden = (pool !== 'artist');
   }
 
@@ -903,6 +923,8 @@
     var all = DB.slice();
     if (st.pool === 'yue') all = all.filter(function (s) { return s.l === 'yue'; });
     else if (st.pool === 'artist') all = all.filter(function (s) { return s.a === st.artist; });
+    else if (st.pool === 'car') all = all.filter(function (s) { return hasTag(s, 'car'); });
+    else if (st.pool === 'douyin') all = all.filter(function (s) { return hasTag(s, 'douyin'); });
     else all = all.filter(function (s) { return s.l !== 'yue'; });
 
     /* 难度：
@@ -1102,7 +1124,8 @@
       { k: 'minutes', name: '时长', opts: [[1, '1 分钟'], [3, '3 分钟'], [5, '5 分钟']], show: s.mode === 'timed' },
       { k: 'play', name: '题目类型', opts: [['sound', '听声'], ['lyric', '看词'], ['singer', '猜歌手']] },
       { k: 'fill', name: '作答方式', opts: [[0, '选选项'], [1, '填空 ×2']] },
-      { k: 'pool', name: '曲库', opts: [['zh', '国语'], ['yue', '粤语'], ['artist', '歌手专项']] },
+      { k: 'pool', name: '曲库', opts: [['zh', '国语'], ['yue', '粤语'], ['artist', '歌手专项'],
+                                        ['car', '车载经典'], ['douyin', '抖音热门']] },
       { k: 'difficulty', name: '难度', opts: [['easy', '简单'], ['normal', '普通'], ['hard', '困难']] }
     ];
     el.roomSettings.innerHTML = '';
@@ -2025,14 +2048,53 @@
       return;
     }
     list.forEach(function (r) {
+      var wrap = document.createElement('div');
+      wrap.className = 'qr-item';
+
       var d = document.createElement('div');
       d.className = 'result-row';
       d.innerHTML = '<div class="av-sm"></div><div style="flex:1;min-width:0"><div class="rr-n"></div><div class="rr-s"></div></div><div class="rr-v"></div>';
       d.querySelector('.av-sm').textContent = r.avatar || '👤';
       d.querySelector('.rr-n').textContent = r.player;
-      d.querySelector('.rr-s').textContent = '答对 ' + r.right + '/' + r.total;
+      d.querySelector('.rr-s').textContent = '答对 ' + r.right + '/' + r.total + ' · ' + timeAgo(r.finishedAt);
       d.querySelector('.rr-v').textContent = fmt(r.score);
-      el.mkResultsList.appendChild(d);
+      wrap.appendChild(d);
+
+      var det = r.detail || [];
+      if (det.length) {
+        var btn = document.createElement('button');
+        btn.className = 'qr-toggle';
+        btn.textContent = '👀 看他的作答（' + det.length + ' 题）▾';
+        var box = document.createElement('div');
+        box.className = 'qr-detail';
+        box.hidden = true;
+        det.forEach(function (x, i) {
+          var parts = String(x.k || '').split('|');
+          var row = document.createElement('div');
+          row.className = 'qr-row ' + (x.ok ? 'is-ok' : 'is-no');
+          row.innerHTML = '<span class="qr-i"></span><span class="qr-c"></span>' +
+            '<span class="qr-p"></span><span class="qr-m"></span>';
+          row.querySelector('.qr-i').textContent = (i + 1);
+          row.querySelector('.qr-c').textContent = parts[0] + '《' + parts[1] + '》';
+          row.querySelector('.qr-p').textContent = x.ok
+            ? '✅ 答对'
+            : ('❌ 他答：' + (x.p ? x.p : '（超时 / 没答）'));
+          row.querySelector('.qr-m').textContent = x.s ? (x.s + 's') : '';
+          box.appendChild(row);
+        });
+        btn.addEventListener('click', function () {
+          box.hidden = !box.hidden;
+          btn.textContent = box.hidden ? ('👀 看他的作答（' + det.length + ' 题）▾') : '收起作答 ▴';
+        });
+        wrap.appendChild(btn);
+        wrap.appendChild(box);
+      } else {
+        var tip = document.createElement('p');
+        tip.className = 'qr-none';
+        tip.textContent = '（这位是旧版本答的，没有作答明细）';
+        wrap.appendChild(tip);
+      }
+      el.mkResultsList.appendChild(wrap);
     });
   }
 
@@ -2059,7 +2121,7 @@
       used: {},
       answered: 0, score: 0, right: 0,
       usedSec: 0, tStart: 0, current: null, over: false,
-      total: pool.length, take: true, basePlay: play
+      total: pool.length, take: true, basePlay: play, detail: []
     };
     el.hudScore.textContent = '0';
     el.hudRight.textContent = '0';
