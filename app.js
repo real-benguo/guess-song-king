@@ -1881,9 +1881,19 @@
     q = (q || '').trim().toLowerCase();
     el.mkResults.innerHTML = '';
     if (!q) return;
-    var hits = DB.filter(function (s) {
-      return s.t.toLowerCase().indexOf(q) >= 0 || s.a.toLowerCase().indexOf(q) >= 0;
-    }).slice(0, 20);
+    // 打分排序：歌名完全一致 > 歌名开头 > 歌名包含 > 歌手开头 > 歌手包含
+    var scored = [];
+    for (var i = 0; i < DB.length; i++) {
+      var s = DB[i], t = s.t.toLowerCase(), a = s.a.toLowerCase(), sc = -1;
+      if (t === q) sc = 0;
+      else if (t.indexOf(q) === 0) sc = 1;
+      else if (t.indexOf(q) >= 0) sc = 2;
+      else if (a.indexOf(q) === 0) sc = 3;
+      else if (a.indexOf(q) >= 0) sc = 4;
+      if (sc >= 0) scored.push([sc, i, s]);
+    }
+    scored.sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; });
+    var hits = scored.slice(0, 40).map(function (x) { return x[2]; });
     if (!hits.length) {
       var e = document.createElement('p');
       e.className = 'empty-tip'; e.textContent = '没搜到，换个词试试';
